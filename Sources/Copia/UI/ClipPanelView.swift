@@ -1,0 +1,458 @@
+import SwiftUI
+import AppKit
+
+struct ClipPanelView: View {
+    @Bindable var model: PanelModel
+    let prefs: Preferences
+    let coordinator: CaptureCoordinator
+    let controller: PanelController
+
+    @FocusState private var searchFocused: Bool
+    @Namespace private var selectionNS
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+
+    var body: some View {
+        ZStack {
+            if model.isMounted {
+                card
+                    .scaleEffect(model.isPresented ? 1 : (reduceMotion ? 1 : 0.94), anchor: model.anchor)
+                    .offset(y: model.isPresented || reduceMotion ? 0 : (model.anchor == .bottom ? 10 : -10))
+                    .opacity(model.isPresented ? 1 : 0)
+                    .blur(radius: model.isPresented || reduceMotion ? 0 : 5)
+            }
+        }
+        .frame(width: PanelController.windowSize.width, height: PanelController.windowSize.height)
+    }
+
+    // MARK: - Carte
+
+    private var card: some View {
+        styled(
+            VStack(spacing: 0) {
+                header
+                Rectangle().fill(.primary.opacity(0.07)).frame(height: 1)
+                content
+                if model.needsAccessibility { accessibilityBanner }
+                footer
+            }
+        )
+        .frame(width: PanelController.cardSize.width, height: PanelController.cardSize.height)
+        .overlay {
+            shape.strokeBorder(
+                LinearGradient(colors: [.white.opacity(0.28), .white.opacity(0.06)], startPoint: .top, endPoint: .bottom),
+                lineWidth: 0.8)
+        }
+        .shadow(color: .black.opacity(0.30), radius: 24, y: 14)
+        .shadow(color: .black.opacity(0.10), radius: 1.5, y: 0.5)
+    }
+
+    @ViewBuilder
+    private func styled(_ v: some View) -> some View {
+        if prefs.panelMaterial == .glass {
+            v.glassEffect(.regular, in: shape)
+        } else {
+            v.background(VisualEffectBackground(material: .popover)).clipShape(shape)
+        }
+    }
+
+    // MARK: - En-tête / recherche
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(model.query.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.accentColor))
+                .symbolEffect(.bounce.down, value: model.focusToken)
+
+            TextField("", text: $model.query,
+                      prompt: Text(model.totalCount > 1 ? "Rechercher parmi \(model.totalCount) copies…" : "Rechercher…"))
+                .textFieldStyle(.plain)
+                .font(.system(size: 17))
+                .focused($searchFocused)
+
+            if !model.query.isEmpty {
+                Button { model.query = "" } label: {
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 14))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tertiary)
+                .transition(.scale(scale: 0.6).combined(with: .opacity))
+            }
+
+            if prefs.paused {
+                Label("En pause", systemImage: "pause.fill")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Color.orange.opacity(0.18), in: Capsule())
+                    .foregroundStyle(.orange)
+            }
+
+            Button { controller.openSettings() } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 14, weight: .medium))
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(HoverButtonStyle())
+            .help("Réglages (⌘,)")
+        }
+        .padding(.leading, 18).padding(.trailing, 12)
+        .frame(height: 56)
+        .animation(.snappy(duration: 0.2), value: model.query.isEmpty)
+        .onChange(of: model.focusToken) { searchFocused = true }
+    }
+
+    // MARK: - Liste
+
+    @ViewBuilder
+    private var content: some View {
+        if model.flat.isEmpty {
+            emptyState
+        } else {
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        if !model.pinned.isEmpty {
+                            SectionLabel(title: "Épinglés", systemImage: "pin.fill")
+                            ForEach(Array(model.pinned.enumerated()), id: \.element.id) { i, row in
+                                rowView(row, index: i)
+                            }
+                        }
+                        if !model.rows.isEmpty {
+                            SectionLabel(title: sectionTitle,
+                                         systemImage: model.query.isEmpty ? "clock" : "sparkle.magnifyingglass")
+                            ForEach(Array(model.rows.enumerated()), id: \.element.id) { i, row in
+                                rowView(row, index: model.pinned.count + i)
+                            }
+                        }
+                        if model.hiddenCount > 0 {
+                            Text("\(model.hiddenCount) autres copies dans l'historique — tapez pour les retrouver")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                }
+                .scrollIndicators(.automatic)
+                .onChange(of: model.selectedID) { _, id in
+                    guard let id, model.keyboardDriven else { return }
+                    withAnimation(.snappy(duration: 0.18)) { proxy.scrollTo(id) }
+                }
+                .onChange(of: model.query) { _, _ in
+                    if let first = model.flat.first?.id { proxy.scrollTo(first, anchor: .top) }
+                }
+            }
+        }
+    }
+
+    private var sectionTitle: String {
+        if model.query.isEmpty { return "Récents" }
+        return model.rows.count == 1 ? "1 résultat" : "\(model.rows.count) résultats"
+    }
+
+    private func rowView(_ row: RowData, index: Int) -> some View {
+        ClipRowView(row: row,
+                    index: index,
+                    isSelected: model.selectedID == row.id,
+                    isCurrent: row.item.hash == coordinator.currentHash,
+                    terms: model.highlightTerms,
+                    lines: prefs.previewLines,
+                    showNumber: prefs.showShortcutNumbers && index < 9,
+                    namespace: selectionNS)
+            .id(row.id)
+            .opacity(model.isPresented ? 1 : 0)
+            .offset(y: model.isPresented || reduceMotion ? 0 : 8)
+            .animation(.spring(duration: 0.38, bounce: 0.2).delay(Double(min(index, 10)) * 0.016),
+                       value: model.isPresented)
+            .onTapGesture { controller.activate(row.id, copyOnly: false) }
+            .onContinuousHover { phase in
+                if case .active = phase, model.selectedID != row.id {
+                    model.keyboardDriven = false
+                    withAnimation(.snappy(duration: 0.16)) { model.selectedID = row.id }
+                }
+            }
+            .contextMenu {
+                Button(prefs.pasteOnSelect ? "Coller" : "Copier") { controller.activate(row.id, copyOnly: false) }
+                Button("Copier seulement") { controller.activate(row.id, copyOnly: true) }
+                Divider()
+                Button(row.item.pinned ? "Désépingler" : "Épingler") { controller.togglePin(row.id) }
+                Button("Supprimer", role: .destructive) { controller.delete(row.id) }
+            }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: model.query.isEmpty ? "doc.on.clipboard" : "text.magnifyingglass")
+                .font(.system(size: 36, weight: .light))
+                .foregroundStyle(.tertiary)
+                .symbolEffect(.wiggle, value: model.query)
+            Text(model.query.isEmpty ? "Ton historique est vide" : "Aucun résultat")
+                .font(.system(size: 14, weight: .semibold))
+            Text(model.query.isEmpty
+                 ? "Copie du texte n'importe où, il apparaîtra ici."
+                 : "Rien ne ressemble à « \(model.query) ».")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(30)
+        .transition(.opacity)
+    }
+
+    private var accessibilityBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
+            Text("Autorise l'accessibilité pour coller automatiquement.")
+                .font(.system(size: 11.5))
+            Spacer()
+            Button("Autoriser") { controller.requestAccessibility() }
+                .controlSize(.small)
+                .buttonStyle(.borderedProminent)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(Color.orange.opacity(0.10))
+    }
+
+    // MARK: - Pied
+
+    private var footer: some View {
+        HStack(spacing: 12) {
+            KeyHint(keys: ["↩"], label: prefs.pasteOnSelect ? "Coller" : "Copier")
+            KeyHint(keys: ["⌘", "↩"], label: "Copier")
+            KeyHint(keys: ["⌘", "P"], label: "Épingler")
+            KeyHint(keys: ["⌘", "⌫"], label: "Suppr.")
+            Spacer(minLength: 0)
+            Text("\(model.flat.count) / \(model.totalCount)")
+                .monospacedDigit()
+                .foregroundStyle(.tertiary)
+                .contentTransition(.numericText())
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 14)
+        .frame(height: 34)
+        .background(Color.primary.opacity(0.035))
+    }
+}
+
+// MARK: - Ligne
+
+struct ClipRowView: View {
+    let row: RowData
+    let index: Int
+    let isSelected: Bool
+    let isCurrent: Bool
+    let terms: [String]
+    let lines: Int
+    let showNumber: Bool
+    let namespace: Namespace.ID
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 11) {
+            SourceIcon(item: row.item, isSelected: isSelected)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(attributedText)
+                    .font(.system(size: 13))
+                    .lineLimit(lines)
+                    .truncationMode(.tail)
+                    .foregroundStyle(isSelected ? Color.white : Color.primary)
+                metaLine
+            }
+            Spacer(minLength: 6)
+            VStack(alignment: .trailing, spacing: 5) {
+                if row.item.pinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .rotationEffect(.degrees(40))
+                        .foregroundStyle(isSelected ? AnyShapeStyle(.white.opacity(0.9)) : AnyShapeStyle(Color.orange))
+                }
+                if showNumber {
+                    Text("⌘\(index + 1)")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(isSelected ? AnyShapeStyle(.white.opacity(0.75)) : AnyShapeStyle(.tertiary))
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(LinearGradient(colors: [Color.accentColor, Color.accentColor.opacity(0.84)],
+                                         startPoint: .top, endPoint: .bottom))
+                    .shadow(color: Color.accentColor.opacity(0.35), radius: 6, y: 2)
+                    .matchedGeometryEffect(id: "selection", in: namespace)
+            }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+    }
+
+    private var metaLine: some View {
+        HStack(spacing: 5) {
+            if row.item.isDictation {
+                Label("Dictée", systemImage: "waveform")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .padding(.horizontal, 5).padding(.vertical, 1.5)
+                    .background(isSelected ? AnyShapeStyle(.white.opacity(0.2)) : AnyShapeStyle(Color.pink.opacity(0.14)),
+                                in: Capsule())
+                    .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(Color.pink))
+            }
+            if isCurrent {
+                HStack(spacing: 3) {
+                    Circle().fill(isSelected ? Color.white : Color.green).frame(width: 5, height: 5)
+                    Text("Actuel")
+                }
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(Color.green))
+            }
+            Text(metaText)
+                .font(.system(size: 10.5))
+                .foregroundStyle(isSelected ? AnyShapeStyle(.white.opacity(0.78)) : AnyShapeStyle(.secondary))
+                .lineLimit(1)
+        }
+    }
+
+    private var metaText: String {
+        var parts = [RelativeTime.string(for: row.item.lastCopiedAt)]
+        if let app = row.item.sourceAppName, !app.isEmpty { parts.append(app) }
+        if row.item.copyCount > 1 { parts.append("×\(row.item.copyCount)") }
+        let n = row.item.text.count
+        if n > 280 { parts.append(n >= 10_000 ? "\(n / 1000) k car." : "\(n.formatted()) car.") }
+        return parts.joined(separator: " · ")
+    }
+
+    private var attributedText: AttributedString {
+        var a = AttributedString(row.display)
+        guard !terms.isEmpty else { return a }
+        let s = row.display
+        for t in terms where !t.isEmpty {
+            var searchRange = s.startIndex..<s.endIndex
+            while let r = s.range(of: t, options: [.caseInsensitive, .diacriticInsensitive], range: searchRange) {
+                if let ar = Range(r, in: a) {
+                    a[ar].backgroundColor = isSelected ? Color.white.opacity(0.28) : Color.yellow.opacity(0.38)
+                    a[ar].font = .system(size: 13, weight: .semibold)
+                }
+                searchRange = r.upperBound..<s.endIndex
+            }
+        }
+        return a
+    }
+}
+
+struct SourceIcon: View {
+    let item: ClipItem
+    let isSelected: Bool
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            if let icon = AppIconCache.shared.icon(for: item.sourceBundleID) {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 22, height: 22)
+            } else {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isSelected ? AnyShapeStyle(.white.opacity(0.22)) : AnyShapeStyle(.primary.opacity(0.08)))
+                    .frame(width: 22, height: 22)
+                    .overlay {
+                        Image(systemName: "text.alignleft")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                    }
+            }
+        }
+        .frame(width: 24, height: 24)
+    }
+}
+
+// MARK: - Petits composants
+
+struct SectionLabel: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        Label(title, systemImage: systemImage)
+            .font(.system(size: 10.5, weight: .semibold))
+            .textCase(.uppercase)
+            .kerning(0.4)
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
+            .padding(.bottom, 3)
+            .contentTransition(.numericText())
+    }
+}
+
+struct KeyCap: View {
+    let key: String
+    var body: some View {
+        Text(key)
+            .font(.system(size: 10, weight: .medium, design: .rounded))
+            .frame(minWidth: 16, minHeight: 16)
+            .padding(.horizontal, 3)
+            .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(.primary.opacity(0.07)))
+            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(.primary.opacity(0.10), lineWidth: 0.5))
+    }
+}
+
+struct KeyHint: View {
+    let keys: [String]
+    let label: String
+    var body: some View {
+        HStack(spacing: 4) {
+            HStack(spacing: 2) { ForEach(keys, id: \.self) { KeyCap(key: $0) } }
+            Text(label)
+        }
+    }
+}
+
+struct HoverButtonStyle: ButtonStyle {
+    @State private var hovering = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(hovering ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(.primary.opacity(configuration.isPressed ? 0.14 : (hovering ? 0.08 : 0))))
+            .scaleEffect(configuration.isPressed ? 0.92 : 1)
+            .animation(.snappy(duration: 0.15), value: hovering)
+            .animation(.snappy(duration: 0.1), value: configuration.isPressed)
+            .onHover { hovering = $0 }
+    }
+}
+
+struct VisualEffectBackground: NSViewRepresentable {
+    var material: NSVisualEffectView.Material = .popover
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let v = NSVisualEffectView()
+        v.material = material
+        v.blendingMode = .behindWindow
+        v.state = .active
+        v.isEmphasized = true
+        return v
+    }
+    func updateNSView(_ v: NSVisualEffectView, context: Context) { v.material = material }
+}
+
+enum RelativeTime {
+    static func string(for date: Date, now: Date = .now) -> String {
+        let s = now.timeIntervalSince(date)
+        switch s {
+        case ..<45: return "à l'instant"
+        case ..<3_600: return "il y a \(Int(s / 60) == 0 ? 1 : Int(s / 60)) min"
+        case ..<86_400: return "il y a \(Int(s / 3_600)) h"
+        default:
+            if Calendar.current.isDateInYesterday(date) { return "hier" }
+            let days = Int(s / 86_400)
+            if days < 7 { return "il y a \(days) j" }
+            return date.formatted(.dateTime.day().month(.abbreviated))
+        }
+    }
+}
