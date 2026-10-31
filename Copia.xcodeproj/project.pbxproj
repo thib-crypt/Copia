@@ -12,6 +12,8 @@
 		29BDA232F49D4952E3325E9E /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F72E91A9E997519ACFF861B /* main.swift */; };
 		4CE3A8B7BB3948552895672C /* FuzzySearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 983535C3DA9033CE848C3420 /* FuzzySearch.swift */; };
 		52F835C9778AE14EB17816E4 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4E1C1DD4F4B0B3A14E4CEED /* AppDelegate.swift */; };
+		6FDD954F42F4E89BFDB57DB4 /* AnimationsPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C94DD8EE03EA1EF84011C50 /* AnimationsPage.swift */; };
+		76BF37B936F7ED4254F22677 /* Motion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AEE2FB0E86E119100B650A5 /* Motion.swift */; };
 		864E24A6DC5412BD0AD423FE /* CopiaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36CDCA06D8BF2CDB821F2C62 /* CopiaTests.swift */; };
 		92E6C442A8AE83103195EC2F /* ClipDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = A365ACBF1BD7FB40ECCAD69A /* ClipDatabase.swift */; };
 		93CDA6C8ED63D7F0A6E11638 /* DedupEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD4883C46F526E3FFC36B4EA /* DedupEngine.swift */; };
@@ -34,10 +36,12 @@
 		36CDCA06D8BF2CDB821F2C62 /* CopiaTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CopiaTests.swift; sourceTree = "<group>"; };
 		3D9A977E768D0C7580970B4C /* CopyClipImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CopyClipImporter.swift; sourceTree = "<group>"; };
 		4BEB2ABAD90EE2FC038D51FF /* SystemServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemServices.swift; sourceTree = "<group>"; };
+		5C94DD8EE03EA1EF84011C50 /* AnimationsPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnimationsPage.swift; sourceTree = "<group>"; };
 		7AA3864363681356F98D0239 /* Copia.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Copia.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9308C1C6E8477F2B2B5EE607 /* ClipItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipItem.swift; sourceTree = "<group>"; };
 		983535C3DA9033CE848C3420 /* FuzzySearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FuzzySearch.swift; sourceTree = "<group>"; };
 		9921A2E11651C12166393EAE /* PasteboardWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteboardWatcher.swift; sourceTree = "<group>"; };
+		9AEE2FB0E86E119100B650A5 /* Motion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Motion.swift; sourceTree = "<group>"; };
 		9F72E91A9E997519ACFF861B /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		A365ACBF1BD7FB40ECCAD69A /* ClipDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipDatabase.swift; sourceTree = "<group>"; };
 		A5CDD3564647DE0C54F239E8 /* CopiaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CopiaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -89,7 +93,9 @@
 		43FDE8D1C5089F93A166E3B0 /* UI */ = {
 			isa = PBXGroup;
 			children = (
+				5C94DD8EE03EA1EF84011C50 /* AnimationsPage.swift */,
 				B8F7B47EE8DA3E74516C61EF /* ClipPanelView.swift */,
+				9AEE2FB0E86E119100B650A5 /* Motion.swift */,
 				E5C5CE571D13D802BDC79BE5 /* PanelController.swift */,
 				25F36716A9C0D7F1D7C48231 /* SettingsView.swift */,
 			);
@@ -243,6 +249,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6FDD954F42F4E89BFDB57DB4 /* AnimationsPage.swift in Sources */,
 				52F835C9778AE14EB17816E4 /* AppDelegate.swift in Sources */,
 				B2DA1817A7095147DECC0DEF /* CaptureCoordinator.swift in Sources */,
 				92E6C442A8AE83103195EC2F /* ClipDatabase.swift in Sources */,
@@ -252,6 +259,7 @@
 				AB557878403E857754FB6BBD /* CopyClipImporter.swift in Sources */,
 				93CDA6C8ED63D7F0A6E11638 /* DedupEngine.swift in Sources */,
 				4CE3A8B7BB3948552895672C /* FuzzySearch.swift in Sources */,
+				76BF37B936F7ED4254F22677 /* Motion.swift in Sources */,
 				C1E542E8BA5B8AC20C5BE790 /* PanelController.swift in Sources */,
 				CE51F5764941ADF475B08991 /* PasteboardWatcher.swift in Sources */,
 				CFF25030D09358265490D4F6 /* Preferences.swift in Sources */,

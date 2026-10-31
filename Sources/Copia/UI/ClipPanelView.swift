@@ -9,18 +9,19 @@ struct ClipPanelView: View {
 
     @FocusState private var searchFocused: Bool
     @Namespace private var selectionNS
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+    private var motion: Motion { Motion(prefs: prefs) }
 
     var body: some View {
         ZStack {
             if model.isMounted {
+                // Entrée : depuis le déclencheur, jamais depuis scale(0) ; « Réduire les animations » = fondu seul.
                 card
-                    .scaleEffect(model.isPresented ? 1 : (reduceMotion ? 1 : 0.94), anchor: model.anchor)
-                    .offset(y: model.isPresented || reduceMotion ? 0 : (model.anchor == .bottom ? 10 : -10))
+                    .scaleEffect(model.isPresented ? 1 : motion.enterScale, anchor: model.anchor)
+                    .offset(y: model.isPresented ? 0 : -motion.enterOffset * model.enterDirection)
                     .opacity(model.isPresented ? 1 : 0)
-                    .blur(radius: model.isPresented || reduceMotion ? 0 : 5)
+                    .blur(radius: model.isPresented ? 0 : motion.enterBlur)
             }
         }
         .frame(width: PanelController.windowSize.width, height: PanelController.windowSize.height)
@@ -64,7 +65,6 @@ struct ClipPanelView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(model.query.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.accentColor))
-                .symbolEffect(.bounce.down, value: model.focusToken)
 
             TextField("", text: $model.query,
                       prompt: Text(model.totalCount > 1 ? "Rechercher parmi \(model.totalCount) copies…" : "Rechercher…"))
@@ -78,7 +78,7 @@ struct ClipPanelView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.tertiary)
-                .transition(.scale(scale: 0.6).combined(with: .opacity))
+                .transition(.scale(scale: 0.9).combined(with: .opacity))
             }
 
             if prefs.paused {
@@ -100,7 +100,7 @@ struct ClipPanelView: View {
         }
         .padding(.leading, 18).padding(.trailing, 12)
         .frame(height: 56)
-        .animation(.snappy(duration: 0.2), value: model.query.isEmpty)
+        .animation(motion.micro, value: model.query.isEmpty)
         .onChange(of: model.focusToken) { searchFocused = true }
     }
 
@@ -141,7 +141,7 @@ struct ClipPanelView: View {
                 .scrollIndicators(.automatic)
                 .onChange(of: model.selectedID) { _, id in
                     guard let id, model.keyboardDriven else { return }
-                    withAnimation(.snappy(duration: 0.18)) { proxy.scrollTo(id) }
+                    withAnimation(motion.keyboardSelection) { proxy.scrollTo(id) }
                 }
                 .onChange(of: model.query) { _, _ in
                     if let first = model.flat.first?.id { proxy.scrollTo(first, anchor: .top) }
@@ -149,6 +149,8 @@ struct ClipPanelView: View {
             }
         }
     }
+
+    private var cascade: Bool { motion.stagger && model.animatedOpen }
 
     private var sectionTitle: String {
         if model.query.isEmpty { return "Récents" }
@@ -165,16 +167,13 @@ struct ClipPanelView: View {
                     showNumber: prefs.showShortcutNumbers && index < 9,
                     namespace: selectionNS)
             .id(row.id)
-            .opacity(model.isPresented ? 1 : 0)
-            .offset(y: model.isPresented || reduceMotion ? 0 : 8)
-            .animation(.spring(duration: 0.38, bounce: 0.2).delay(Double(min(index, 10)) * 0.016),
-                       value: model.isPresented)
+            // Cascade optionnelle (décorative, désactivée par défaut).
+            .opacity(!cascade || model.isPresented ? 1 : 0)
+            .offset(y: !cascade || model.isPresented ? 0 : 6)
+            .animation(cascade ? motion.rowEnter(index: index) : nil, value: model.isPresented)
             .onTapGesture { controller.activate(row.id, copyOnly: false) }
             .onContinuousHover { phase in
-                if case .active = phase, model.selectedID != row.id {
-                    model.keyboardDriven = false
-                    withAnimation(.snappy(duration: 0.16)) { model.selectedID = row.id }
-                }
+                if case .active = phase { controller.hoverSelect(row.id) }
             }
             .contextMenu {
                 Button(prefs.pasteOnSelect ? "Coller" : "Copier") { controller.activate(row.id, copyOnly: false) }
@@ -190,7 +189,6 @@ struct ClipPanelView: View {
             Image(systemName: model.query.isEmpty ? "doc.on.clipboard" : "text.magnifyingglass")
                 .font(.system(size: 36, weight: .light))
                 .foregroundStyle(.tertiary)
-                .symbolEffect(.wiggle, value: model.query)
             Text(model.query.isEmpty ? "Ton historique est vide" : "Aucun résultat")
                 .font(.system(size: 14, weight: .semibold))
             Text(model.query.isEmpty
@@ -421,9 +419,9 @@ struct HoverButtonStyle: ButtonStyle {
             .foregroundStyle(hovering ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(.primary.opacity(configuration.isPressed ? 0.14 : (hovering ? 0.08 : 0))))
-            .scaleEffect(configuration.isPressed ? 0.92 : 1)
-            .animation(.snappy(duration: 0.15), value: hovering)
-            .animation(.snappy(duration: 0.1), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(Curve.ease(0.15), value: hovering)
+            .animation(Curve.easeOut(0.12), value: configuration.isPressed)
             .onHover { hovering = $0 }
     }
 }

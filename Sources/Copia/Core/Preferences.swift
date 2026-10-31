@@ -93,6 +93,13 @@ final class Preferences {
         }
     }
 
+    // Animations
+    var motionStyle: MotionStyle { didSet { d.set(motionStyle.rawValue, forKey: "motionStyle") } }
+    var animateKeyboardOpen: Bool { didSet { d.set(animateKeyboardOpen, forKey: "animateKeyboardOpen") } }
+    var animateKeyboardNav: Bool { didSet { d.set(animateKeyboardNav, forKey: "animateKeyboardNav") } }
+    var staggerRows: Bool { didSet { d.set(staggerRows, forKey: "staggerRows") } }
+    var slowMotion: Bool { didSet { d.set(slowMotion, forKey: "slowMotion") } }
+
     // Performance
     var pollingMode: PollingMode { didSet { d.set(pollingMode.rawValue, forKey: "pollingMode"); onPollingChange?() } }
 
@@ -130,7 +137,14 @@ final class Preferences {
             "panelPosition": PanelPosition.textCaret.rawValue, "panelMaterial": PanelMaterial.frosted.rawValue,
             "pasteOnSelect": true, "showShortcutNumbers": true, "playSound": false,
             "pollingMode": PollingMode.balanced.rawValue, "captureImages": false,
+            "motionStyle": MotionStyle.subtle.rawValue, "animateKeyboardOpen": false,
+            "animateKeyboardNav": false, "staggerRows": false, "slowMotion": false,
         ])
+        motionStyle = MotionStyle(rawValue: d.string(forKey: "motionStyle") ?? "") ?? .subtle
+        animateKeyboardOpen = d.bool(forKey: "animateKeyboardOpen")
+        animateKeyboardNav = d.bool(forKey: "animateKeyboardNav")
+        staggerRows = d.bool(forKey: "staggerRows")
+        slowMotion = d.bool(forKey: "slowMotion")
         maxStored = d.integer(forKey: "maxStored")
         displayCount = d.integer(forKey: "displayCount")
         previewLines = d.integer(forKey: "previewLines")

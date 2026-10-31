@@ -3,7 +3,7 @@ import AppKit
 import UniformTypeIdentifiers
 
 enum SettingsPage: String, CaseIterable, Identifiable, Hashable {
-    case welcome, general, panel, history, dictation, privacy, media, performance, importer, about
+    case welcome, general, panel, animations, history, dictation, privacy, media, performance, importer, about
     var id: String { rawValue }
 
     var title: String {
@@ -11,6 +11,7 @@ enum SettingsPage: String, CaseIterable, Identifiable, Hashable {
         case .welcome: "Bienvenue"
         case .general: "Général"
         case .panel: "Panneau"
+        case .animations: "Animations"
         case .history: "Historique"
         case .dictation: "Dictée intelligente"
         case .privacy: "Confidentialité"
@@ -26,6 +27,7 @@ enum SettingsPage: String, CaseIterable, Identifiable, Hashable {
         case .welcome: "Trois étapes pour remplacer CopyClip."
         case .general: "Raccourci, démarrage et enregistrement."
         case .panel: "Où et comment s'ouvre ton historique."
+        case .animations: "Du mouvement là où il aide, rien là où il ralentit."
         case .history: "Combien de copies garder, combien en montrer."
         case .dictation: "Fini les allers-retours de VoiceInk dans l'historique."
         case .privacy: "Ce que Copia ne doit jamais retenir."
@@ -41,6 +43,7 @@ enum SettingsPage: String, CaseIterable, Identifiable, Hashable {
         case .welcome: "sparkles"
         case .general: "gearshape.fill"
         case .panel: "macwindow"
+        case .animations: "wand.and.rays"
         case .history: "clock.arrow.circlepath"
         case .dictation: "waveform"
         case .privacy: "hand.raised.fill"
@@ -56,6 +59,7 @@ enum SettingsPage: String, CaseIterable, Identifiable, Hashable {
         case .welcome: .purple
         case .general: .gray
         case .panel: .blue
+        case .animations: .mint
         case .history: .indigo
         case .dictation: .pink
         case .privacy: .red
@@ -68,7 +72,7 @@ enum SettingsPage: String, CaseIterable, Identifiable, Hashable {
 
     static let groups: [[SettingsPage]] = [
         [.welcome],
-        [.general, .panel, .history],
+        [.general, .panel, .animations, .history],
         [.dictation, .privacy, .media],
         [.performance, .importer, .about],
     ]
@@ -104,16 +108,16 @@ struct SettingsRootView: View {
                 }
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 200, ideal: 214, max: 240)
+            .navigationSplitViewColumnWidth(min: 228, ideal: 236, max: 260)
         } detail: {
             ZStack {
                 page(state.page)
                     .id(state.page)
                     .transition(.asymmetric(
-                        insertion: .opacity.combined(with: .offset(y: 8)),
-                        removal: .opacity))
+                        insertion: Motion(prefs: ctx.prefs).reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 6)),
+                        removal: .opacity.animation(Curve.easeOut(0.1))))
             }
-            .animation(.spring(duration: 0.32, bounce: 0.12), value: state.page)
+            .animation(Motion(prefs: ctx.prefs).pageChange, value: state.page)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 780, minHeight: 560)
@@ -125,6 +129,7 @@ struct SettingsRootView: View {
         case .welcome: WelcomePage(ctx: ctx)
         case .general: GeneralPage(ctx: ctx)
         case .panel: PanelPage(prefs: ctx.prefs)
+        case .animations: AnimationsPage(prefs: ctx.prefs)
         case .history: HistoryPage(ctx: ctx)
         case .dictation: DictationPage(prefs: ctx.prefs)
         case .privacy: PrivacyPage(prefs: ctx.prefs)
@@ -185,8 +190,8 @@ struct SettingsPageScaffold<Content: View>: View {
             Section {
                 HStack(spacing: 16) {
                     IconTile(symbol: page.symbol, tint: page.tint, size: 52)
-                        .scaleEffect(appeared ? 1 : 0.7)
-                        .rotationEffect(.degrees(appeared ? 0 : -8))
+                        .scaleEffect(appeared ? 1 : 0.9)
+                        .rotationEffect(.degrees(appeared ? 0 : -4))
                     VStack(alignment: .leading, spacing: 3) {
                         Text(page.title).font(.system(size: 22, weight: .bold))
                         Text(page.subtitle).font(.system(size: 13)).foregroundStyle(.secondary)
@@ -199,7 +204,11 @@ struct SettingsPageScaffold<Content: View>: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .onAppear { withAnimation(.spring(duration: 0.5, bounce: 0.4)) { appeared = true } }
+        .onAppear {
+            let m = Motion(prefs: Preferences.shared)
+            if m.reduceMotion || Preferences.shared.motionStyle == .instant { appeared = true; return }
+            withAnimation(m.delight) { appeared = true }
+        }
     }
 }
 
@@ -286,12 +295,12 @@ struct StepRow<Accessory: View>: View {
                 Circle().fill(done ? Color.green : Color.accentColor.opacity(0.15)).frame(width: 26, height: 26)
                 if done {
                     Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
-                        .transition(.scale.combined(with: .opacity))
+                        .transition(.scale(scale: 0.8).combined(with: .opacity))
                 } else {
                     Text("\(number)").font(.system(size: 12, weight: .bold, design: .rounded)).foregroundStyle(Color.accentColor)
                 }
             }
-            .animation(.spring(duration: 0.4, bounce: 0.5), value: done)
+            .animation(.spring(duration: 0.3, bounce: 0.25), value: done)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 13, weight: .semibold))
                 Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
@@ -374,7 +383,7 @@ struct HotKeyRecorder: View {
                     .fill(recording ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.05)))
                 .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .strokeBorder(recording ? Color.accentColor : Color.primary.opacity(0.12), lineWidth: recording ? 1.5 : 0.5))
-                .animation(.snappy(duration: 0.2), value: recording)
+                .animation(Curve.easeOut(0.15), value: recording)
             }
             .buttonStyle(.plain)
             if prefs.hotKey != nil && !recording {
@@ -464,7 +473,7 @@ struct HistoryPage: View {
                     StatTile(value: ctx.store.pinnedCount, label: "épinglées", symbol: "pin.fill", tint: .orange)
                     StatTile(value: prefs.statPastes, label: "collages via Copia", symbol: "arrow.down.doc.fill", tint: .blue)
                 }
-                .animation(.snappy, value: ctx.store.count)
+                .animation(Curve.easeOut(0.2), value: ctx.store.count)
             }
             Section("Capacité") {
                 LabeledContent {
@@ -522,7 +531,7 @@ struct DictationPage: View {
     var body: some View {
         SettingsPageScaffold(page: .dictation) {
             Section {
-                Toggle(isOn: $prefs.smartDictation.animation(.snappy)) {
+                Toggle(isOn: $prefs.smartDictation.animation(Curve.easeOut(0.2))) {
                     Text("Dictée intelligente").font(.system(size: 13, weight: .semibold))
                     Text("Quand ton app de dictée colle la transcription puis remet ton ancien presse-papier, Copia garde la transcription une seule fois et ignore la restauration.")
                 }
@@ -611,7 +620,7 @@ struct DictationDiagram: View {
                     Image(systemName: "line.diagonal")
                         .font(.system(size: 30, weight: .semibold))
                         .foregroundStyle(.secondary)
-                        .transition(.scale.combined(with: .opacity))
+                        .transition(.scale(scale: 0.8).combined(with: .opacity))
                 }
             }
             Spacer()
@@ -623,8 +632,8 @@ struct DictationDiagram: View {
                     .contentTransition(.numericText())
             }
         }
-        .animation(.spring(duration: 0.45, bounce: 0.3), value: phase)
-        .animation(.snappy, value: enabled)
+        .animation(Curve.easeOut(0.25), value: phase)
+        .animation(Curve.easeOut(0.2), value: enabled)
         .onReceive(timer) { _ in phase = (phase + 1) % 4 }
     }
 
@@ -709,7 +718,7 @@ struct AppListRow: View {
                 Text(bundleID).font(.system(size: 10)).foregroundStyle(.tertiary)
             }
             Spacer()
-            Button(action: { withAnimation(.snappy) { onRemove() } }) {
+            Button(action: { withAnimation(Curve.easeOut(0.2)) { onRemove() } }) {
                 Image(systemName: "minus.circle.fill").font(.system(size: 14))
             }
             .buttonStyle(.plain)
@@ -819,7 +828,7 @@ struct PerformancePage: View {
     }
 
     private func refresh() {
-        withAnimation(.snappy) {
+        withAnimation(Curve.easeOut(0.2)) {
             memory = ProcessStats.residentMegabytes
             checks = ctx.watcher.checksPerSecond
         }
@@ -882,12 +891,12 @@ struct ImportPage: View {
                 HStack {
                     if let result {
                         Label(result, systemImage: "checkmark.seal.fill").foregroundStyle(.green)
-                            .transition(.move(edge: .leading).combined(with: .opacity))
+                            .transition(.opacity.combined(with: .offset(x: -6)))
                     }
                     Spacer()
                     Button {
                         running = true
-                        withAnimation(.spring) { result = Self.runImport(ctx: ctx) }
+                        withAnimation(Curve.easeOut(0.22)) { result = Self.runImport(ctx: ctx) }
                         running = false
                     } label: {
                         if running { ProgressView().controlSize(.small) } else { Text("Importer l'historique") }

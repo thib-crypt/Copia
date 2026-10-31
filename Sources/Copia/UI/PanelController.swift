@@ -21,7 +21,12 @@ final class PanelModel {
     var highlightTerms: [String] = []
     var totalCount = 0
     var hiddenCount = 0
+    /// Point d'où le panneau grandit (le déclencheur : curseur de texte, souris ou icône).
     var anchor: UnitPoint = .top
+    /// Le panneau vient d'au-dessus (+1), d'en dessous (-1) ou est centré comme une modale (0).
+    var enterDirection: CGFloat = 1
+    /// L'ouverture en cours est-elle animée ? (sinon pas de cascade non plus)
+    var animatedOpen = false
     var needsAccessibility = false
 
     @ObservationIgnored var onQueryChange: (() -> Void)?
@@ -107,41 +112,65 @@ final class PanelController {
     // MARK: - Affichage
 
     func toggle(_ origin: Origin) {
-        if model.isPresented { hide(); return }
+        if model.isPresented {
+            if case .hotKey = origin { hide(byKeyboard: true) } else { hide() }
+            return
+        }
         if case .statusItem = origin, Date.now.timeIntervalSince(lastHide) < 0.3 { return }
         show(origin)
     }
 
+    private var motion: Motion { Motion(prefs: prefs) }
+
     func show(_ origin: Origin) {
+        let byKeyboard: Bool
+        if case .hotKey = origin { byKeyboard = true } else { byKeyboard = false }
         model.query = ""
         refresh()
         model.selectedID = model.flat.first?.id
         model.needsAccessibility = prefs.pasteOnSelect && !Paster.isTrusted
 
-        let (cardRect, anchor) = targetCardRect(for: origin)
-        model.anchor = anchor
-        panel.setFrame(cardRect.insetBy(dx: -Self.shadowPad, dy: -Self.shadowPad), display: false)
+        let placement = targetCardRect(for: origin)
+        model.anchor = placement.anchor
+        model.enterDirection = placement.direction
+        panel.setFrame(placement.rect.insetBy(dx: -Self.shadowPad, dy: -Self.shadowPad), display: false)
+
+        let animation = motion.panelEnter(byKeyboard: byKeyboard)
+        model.animatedOpen = animation != nil
         model.isMounted = true
+        if animation == nil { model.isPresented = true }
         panel.makeKeyAndOrderFront(nil)
         installMonitors()
-        DispatchQueue.main.async { [self] in
-            withAnimation(.spring(duration: 0.32, bounce: 0.18)) { model.isPresented = true }
-            model.focusToken += 1
+        model.focusToken += 1
+        if let animation {
+            // Un tour de boucle pour que l'état initial soit rendu avant l'animation d'entrée.
+            DispatchQueue.main.async { [self] in withAnimation(animation) { model.isPresented = true } }
         }
     }
 
-    func hide(completion: (() -> Void)? = nil) {
+    /// - Parameter byKeyboard: fermeture provoquée par une touche (↩, ⎋, ⌘1…) → instantanée.
+    func hide(byKeyboard: Bool = false, completion: (() -> Void)? = nil) {
         guard model.isPresented else { completion?(); return }
         removeMonitors()
         lastHide = .now
-        withAnimation(.easeIn(duration: 0.11)) { model.isPresented = false }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.11) { [weak self] in
+        let (animation, duration) = motion.panelExit(byKeyboard: byKeyboard)
+        let finish = { [weak self] in
             guard let self else { return }
             if !self.model.isPresented {
                 self.panel.orderOut(nil)
                 self.model.isMounted = false
                 self.searchTask?.cancel()
             }
+        }
+        guard let animation else {
+            model.isPresented = false
+            finish()
+            completion?()
+            return
+        }
+        withAnimation(animation) { model.isPresented = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+            finish()
             completion?()
         }
     }
@@ -189,16 +218,17 @@ final class PanelController {
 
     // MARK: - Actions
 
-    func activate(_ id: Int64, copyOnly: Bool) {
+    func activate(_ id: Int64, copyOnly: Bool, byKeyboard: Bool = false) {
         guard let item = store.item(id: id) else { return }
         coordinator.copyToPasteboard(item)
         prefs.statPastes += 1
         if prefs.playSound { NSSound(named: "Pop")?.play() }
         let shouldPaste = prefs.pasteOnSelect && !copyOnly
-        hide {
+        // Le collage n'attend jamais la fin d'une animation : on ferme instantanément.
+        hide(byKeyboard: byKeyboard || shouldPaste) {
             guard shouldPaste else { return }
             if Paster.isTrusted {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) { Paster.sendCommandV() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { Paster.sendCommandV() }
             } else {
                 Paster.requestTrust()
             }
@@ -206,7 +236,7 @@ final class PanelController {
     }
 
     func togglePin(_ id: Int64) {
-        withAnimation(.snappy(duration: 0.25)) {
+        withAnimation(motion.listChange) {
             store.togglePin(id: id)
             refresh()
         }
@@ -215,7 +245,7 @@ final class PanelController {
     func delete(_ id: Int64) {
         let flat = model.flat
         let idx = flat.firstIndex { $0.id == id } ?? 0
-        withAnimation(.snappy(duration: 0.25)) {
+        withAnimation(motion.listChange) {
             store.delete(id: id)
             refresh()
             let newFlat = model.flat
@@ -238,7 +268,14 @@ final class PanelController {
         let idx = flat.firstIndex { $0.id == model.selectedID } ?? -1
         let next = (idx + delta + flat.count) % flat.count
         model.keyboardDriven = true
-        withAnimation(.snappy(duration: 0.18)) { model.selectedID = flat[next].id }
+        withAnimation(motion.keyboardSelection) { model.selectedID = flat[next].id }
+    }
+
+    /// Sélection au survol : instantanée.
+    func hoverSelect(_ id: Int64) {
+        guard model.selectedID != id else { return }
+        model.keyboardDriven = false
+        withAnimation(motion.hoverSelection) { model.selectedID = id }
     }
 
     // MARK: - Clavier
@@ -273,9 +310,9 @@ final class PanelController {
         case kVK_UpArrow: move(-1)
         case kVK_Tab: move(flags.contains(.shift) ? -1 : 1)
         case kVK_Return, kVK_ANSI_KeypadEnter:
-            if let id = model.selectedID { activate(id, copyOnly: cmd) }
+            if let id = model.selectedID { activate(id, copyOnly: cmd, byKeyboard: true) }
         case kVK_Escape:
-            if model.query.isEmpty { hide() } else { model.query = "" }
+            if model.query.isEmpty { hide(byKeyboard: true) } else { model.query = "" }
         case kVK_Delete where cmd:
             if let id = model.selectedID { delete(id) }
         case kVK_ANSI_P where cmd:
@@ -285,7 +322,7 @@ final class PanelController {
         case _ where cmd && Self.digitKeys.contains(code):
             let n = Self.digitKeys.firstIndex(of: code)!
             let flat = model.flat
-            if n < flat.count { activate(flat[n].id, copyOnly: false) }
+            if n < flat.count { activate(flat[n].id, copyOnly: false, byKeyboard: true) }
         default:
             return false
         }
@@ -294,7 +331,13 @@ final class PanelController {
 
     // MARK: - Position
 
-    private func targetCardRect(for origin: Origin) -> (NSRect, UnitPoint) {
+    private struct Placement {
+        let rect: NSRect
+        let anchor: UnitPoint
+        let direction: CGFloat
+    }
+
+    private func targetCardRect(for origin: Origin) -> Placement {
         let size = Self.cardSize
         let mouse = NSEvent.mouseLocation
 
@@ -302,25 +345,31 @@ final class PanelController {
             NSScreen.screens.first { NSMouseInRect(p, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
         }
 
-        func below(_ anchorRect: NSRect, centered: Bool) -> (NSRect, UnitPoint) {
+        /// Place la carte sous (ou au-dessus de) le déclencheur, et fait grandir le panneau
+        /// depuis le point exact du déclencheur, même après recadrage au bord de l'écran.
+        func below(_ anchorRect: NSRect, centered: Bool) -> Placement {
             let vf = screen(containing: NSPoint(x: anchorRect.midX, y: anchorRect.midY)).visibleFrame
             var x = centered ? anchorRect.midX - size.width / 2 : anchorRect.minX - 18
             var y = anchorRect.minY - 6 - size.height
-            var anchor = UnitPoint.top
+            var above = false
             if y < vf.minY + 8 {
                 // Pas la place en dessous : on ouvre au-dessus.
                 y = anchorRect.maxY + 6
-                anchor = .bottom
+                above = true
             }
             x = min(max(x, vf.minX + 8), vf.maxX - size.width - 8)
             y = min(max(y, vf.minY + 8), vf.maxY - size.height - 8)
-            return (NSRect(origin: NSPoint(x: x, y: y), size: size), anchor)
+            let ax = min(max((anchorRect.midX - x) / size.width, 0), 1)
+            let anchor = UnitPoint(x: centered ? 0.5 : ax, y: above ? 1 : 0)
+            return Placement(rect: NSRect(origin: NSPoint(x: x, y: y), size: size), anchor: anchor,
+                             direction: above ? -1 : 1)
         }
 
-        func centered() -> (NSRect, UnitPoint) {
+        /// Mode « centre de l'écran » : se comporte comme une modale, donc centré.
+        func centered() -> Placement {
             let vf = screen(containing: mouse).visibleFrame
             let origin = NSPoint(x: vf.midX - size.width / 2, y: vf.midY - size.height / 2 + vf.height * 0.08)
-            return (NSRect(origin: origin, size: size), .center)
+            return Placement(rect: NSRect(origin: origin, size: size), anchor: .center, direction: 0)
         }
 
         switch origin {
