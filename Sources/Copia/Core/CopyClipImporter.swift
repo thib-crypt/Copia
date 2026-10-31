@@ -17,21 +17,47 @@ nonisolated enum CopyClipImporter {
 
     static var isAvailable: Bool { FileManager.default.fileExists(atPath: databaseURL.path) }
 
-    static func readEntries() throws -> [Entry] {
+    enum ImportError: LocalizedError {
+        /// macOS bloque l'accès au conteneur d'une autre app tant que l'utilisateur ne l'a pas choisi lui-même.
+        case accessDenied
+        case unreadable(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .accessDenied: "macOS protège les données de CopyClip. Sélectionne son dossier pour autoriser l'accès."
+            case .unreadable(let s): s
+            }
+        }
+    }
+
+    /// - Parameter folder: dossier contenant `copyclip.sqlite` (choisi par l'utilisateur), sinon l'emplacement par défaut.
+    static func readEntries(from folder: URL? = nil) throws -> [Entry] {
         let fm = FileManager.default
+        let source = folder?.appendingPathComponent("copyclip.sqlite") ?? databaseURL
         let tmp = fm.temporaryDirectory.appendingPathComponent("copia-import-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: tmp) }
         for suffix in ["", "-wal", "-shm"] {
-            let src = URL(fileURLWithPath: databaseURL.path + suffix)
-            if fm.fileExists(atPath: src.path) {
-                try fm.copyItem(at: src, to: tmp.appendingPathComponent("copyclip.sqlite" + suffix))
+            let src = URL(fileURLWithPath: source.path + suffix)
+            guard fm.fileExists(atPath: src.path) else {
+                if suffix.isEmpty { throw ImportError.unreadable("copyclip.sqlite introuvable dans ce dossier.") }
+                continue
             }
+            // Lecture brute (pas de copie d'attributs étendus), pour isoler un refus d'accès en lecture.
+            let data: Data
+            do {
+                data = try Data(contentsOf: src)
+            } catch {
+                // Le fichier existe mais n'est pas lisible : c'est la protection des conteneurs de macOS.
+                NSLog("Copia import: lecture refusée \(src.lastPathComponent) — \(error)")
+                throw ImportError.accessDenied
+            }
+            try data.write(to: tmp.appendingPathComponent("copyclip.sqlite" + suffix))
         }
 
         var db: OpaquePointer?
         guard sqlite3_open_v2(tmp.appendingPathComponent("copyclip.sqlite").path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else {
-            throw NSError(domain: "Copia", code: 1, userInfo: [NSLocalizedDescriptionKey: "Base CopyClip illisible"])
+            throw ImportError.unreadable("Base CopyClip illisible.")
         }
         defer { sqlite3_close(db) }
 
@@ -43,7 +69,7 @@ nonisolated enum CopyClipImporter {
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw NSError(domain: "Copia", code: 2, userInfo: [NSLocalizedDescriptionKey: "Format CopyClip inattendu"])
+            throw ImportError.unreadable("Format CopyClip inattendu.")
         }
         defer { sqlite3_finalize(stmt) }
 

@@ -232,6 +232,9 @@ struct WelcomePage: View {
     @State private var importResult: String?
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
+    /// Les messages de succès commencent par le nombre de copies importées.
+    private var importSucceeded: Bool { importResult?.first?.isNumber == true }
+
     var body: some View {
         SettingsPageScaffold(page: .welcome) {
             Section {
@@ -242,12 +245,12 @@ struct WelcomePage: View {
                     }
                     .disabled(trusted)
                 }
-                StepRow(number: 2, done: importResult != nil, title: "Importer ton historique CopyClip",
+                StepRow(number: 2, done: importSucceeded, title: "Importer ton historique CopyClip",
                         detail: importResult ?? (CopyClipImporter.isAvailable
                                                  ? "Les copies de CopyClip seront ajoutées, sans doublons."
                                                  : "CopyClip introuvable sur ce Mac.")) {
                     Button("Importer") { importResult = ImportPage.runImport(ctx: ctx) }
-                        .disabled(!CopyClipImporter.isAvailable || importResult != nil)
+                        .disabled(!CopyClipImporter.isAvailable || importSucceeded)
                 }
                 StepRow(number: 3, done: false, title: "Essayer le raccourci",
                         detail: "Appuie n'importe où pour ouvrir l'historique, tape pour chercher, ↩ pour coller.") {
@@ -898,7 +901,14 @@ struct ImportPage: View {
 
     static func runImport(ctx: AppContext) -> String {
         do {
-            let entries = try CopyClipImporter.readEntries()
+            let entries: [CopyClipImporter.Entry]
+            do {
+                entries = try CopyClipImporter.readEntries()
+            } catch CopyClipImporter.ImportError.accessDenied {
+                // macOS exige que l'utilisateur désigne lui-même le dossier d'une autre app.
+                guard let folder = pickCopyClipFolder() else { return "Import annulé." }
+                entries = try CopyClipImporter.readEntries(from: folder)
+            }
             let added = ctx.store.importClips(entries, trimWhitespace: ctx.prefs.trimWhitespaceForDedup)
             ctx.store.enforceLimits(maxItems: ctx.prefs.maxStored, retentionDays: ctx.prefs.retentionDays)
             let skipped = entries.count - added
@@ -906,6 +916,24 @@ struct ImportPage: View {
         } catch {
             return "Échec : \(error.localizedDescription)"
         }
+    }
+
+    private static func pickCopyClipFolder() -> URL? {
+        let panel = NSOpenPanel()
+        panel.title = "Autoriser l'accès à CopyClip"
+        panel.message = "macOS protège les données de CopyClip. Clique simplement sur « Autoriser » : le dossier est déjà sélectionné."
+        panel.prompt = "Autoriser"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        panel.treatsFilePackagesAsDirectories = true
+        let folder = CopyClipImporter.databaseURL.deletingLastPathComponent()
+        panel.directoryURL = folder.deletingLastPathComponent()
+        NSApp.activate()
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        // Accepte le dossier ou directement le fichier copyclip.sqlite.
+        return url.pathExtension == "sqlite" ? url.deletingLastPathComponent() : url
     }
 }
 
