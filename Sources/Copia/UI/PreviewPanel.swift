@@ -282,8 +282,8 @@ struct PreviewCardView: View {
                 LinearGradient(colors: [.white.opacity(0.28), .white.opacity(0.06)], startPoint: .top, endPoint: .bottom),
                 lineWidth: 0.8)
         }
-        .shadow(color: .black.opacity(0.26), radius: 18, y: 10)
-        .shadow(color: .black.opacity(0.10), radius: 1.5, y: 0.5)
+        .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
+        .shadow(color: .black.opacity(0.08), radius: 1, y: 0.5)
     }
 
     @ViewBuilder
