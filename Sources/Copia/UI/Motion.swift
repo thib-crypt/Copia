@@ -98,6 +98,20 @@ struct Motion {
         return Curve.easeOut(0.15 * k)
     }
 
+    // MARK: Aperçu au survol (une infobulle)
+
+    /// 150 ms ease-out pour le premier ; les suivants s'affichent sans animation.
+    var previewEnter: Animation? {
+        guard style != .instant else { return nil }
+        return reduceMotion ? Curve.ease(0.12 * k) : Curve.easeOut(0.15 * k)
+    }
+    var previewExit: (Animation?, TimeInterval) {
+        guard style != .instant else { return (nil, 0) }
+        let d = 0.1 * k
+        return (reduceMotion ? Curve.ease(d) : Curve.easeOut(d), d)
+    }
+    var previewScale: CGFloat { reduceMotion ? 1 : 0.97 }
+
     // MARK: Réglages (rares : un peu de plaisir permis)
 
     var pageChange: Animation {

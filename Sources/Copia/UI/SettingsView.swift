@@ -444,6 +444,26 @@ struct PanelPage: View {
                 }
                 Toggle("Afficher les raccourcis ⌘1 … ⌘9", isOn: $prefs.showShortcutNumbers)
             }
+            Section("Aperçu au survol") {
+                Toggle(isOn: $prefs.hoverPreview.animation(Curve.easeOut(0.2))) {
+                    Text("Afficher le contenu complet au survol")
+                    Text("Garde le pointeur sur une copie : un grand aperçu s'ouvre à côté du panneau. Tu peux le faire défiler. ⌘Y l'ouvre aussi au clavier.")
+                }
+                if prefs.hoverPreview {
+                    LabeledContent {
+                        HStack(spacing: 10) {
+                            Slider(value: $prefs.hoverPreviewDelay, in: 0.3...1.5, step: 0.1)
+                                .frame(width: 170)
+                            Text("\(prefs.hoverPreviewDelay.formatted(.number.precision(.fractionLength(1)))) s")
+                                .monospacedDigit()
+                                .frame(width: 34, alignment: .trailing)
+                        }
+                    } label: {
+                        Text("Délai avant ouverture")
+                        Text("Une fois l'aperçu ouvert, passer d'une copie à l'autre est instantané.")
+                    }
+                }
+            }
             Section("Action") {
                 Toggle(isOn: $prefs.pasteOnSelect) {
                     Text("Coller directement au curseur")
@@ -974,6 +994,7 @@ struct AboutPage: View {
                 ShortcutRow(keys: ["↩"], label: "Coller au curseur")
                 ShortcutRow(keys: ["⌘", "↩"], label: "Copier sans coller")
                 ShortcutRow(keys: ["⌘", "1…9"], label: "Coller la copie n°1 à 9")
+                ShortcutRow(keys: ["⌘", "Y"], label: "Aperçu du contenu complet")
                 ShortcutRow(keys: ["⌘", "P"], label: "Épingler / désépingler")
                 ShortcutRow(keys: ["⌘", "⌫"], label: "Supprimer")
                 ShortcutRow(keys: ["⎋"], label: "Effacer la recherche, puis fermer")

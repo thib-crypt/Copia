@@ -85,6 +85,9 @@ final class Preferences {
     var pasteOnSelect: Bool { didSet { d.set(pasteOnSelect, forKey: "pasteOnSelect") } }
     var showShortcutNumbers: Bool { didSet { d.set(showShortcutNumbers, forKey: "showShortcutNumbers") } }
     var playSound: Bool { didSet { d.set(playSound, forKey: "playSound") } }
+    /// Grand aperçu du contenu complet après un survol prolongé.
+    var hoverPreview: Bool { didSet { d.set(hoverPreview, forKey: "hoverPreview") } }
+    var hoverPreviewDelay: Double { didSet { d.set(hoverPreviewDelay, forKey: "hoverPreviewDelay") } }
     var hotKey: KeyCombo? {
         didSet {
             if let hotKey, let data = try? JSONEncoder().encode(hotKey) { d.set(data, forKey: "hotKey") }
@@ -136,6 +139,7 @@ final class Preferences {
             "paused": false,
             "panelPosition": PanelPosition.textCaret.rawValue, "panelMaterial": PanelMaterial.frosted.rawValue,
             "pasteOnSelect": true, "showShortcutNumbers": true, "playSound": false,
+            "hoverPreview": true, "hoverPreviewDelay": 0.7,
             "pollingMode": PollingMode.balanced.rawValue, "captureImages": false,
             "motionStyle": MotionStyle.subtle.rawValue, "animateKeyboardOpen": false,
             "animateKeyboardNav": false, "staggerRows": false, "slowMotion": false,
@@ -165,6 +169,8 @@ final class Preferences {
         pasteOnSelect = d.bool(forKey: "pasteOnSelect")
         showShortcutNumbers = d.bool(forKey: "showShortcutNumbers")
         playSound = d.bool(forKey: "playSound")
+        hoverPreview = d.bool(forKey: "hoverPreview")
+        hoverPreviewDelay = d.double(forKey: "hoverPreviewDelay")
         if let data = d.data(forKey: "hotKey") {
             hotKey = data.isEmpty ? nil : (try? JSONDecoder().decode(KeyCombo.self, from: data)) ?? .default
         } else {

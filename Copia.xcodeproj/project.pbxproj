@@ -26,6 +26,7 @@
 		CE51F5764941ADF475B08991 /* PasteboardWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9921A2E11651C12166393EAE /* PasteboardWatcher.swift */; };
 		CFF25030D09358265490D4F6 /* Preferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C075443CDAD419F8810CE5 /* Preferences.swift */; };
 		E469BCD7B62B1D3D9B45EF1B /* DedupEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD4883C46F526E3FFC36B4EA /* DedupEngine.swift */; };
+		EBFF3FEDD36027058013C76A /* PreviewPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1E81B92BF4FF1B86E4060E8 /* PreviewPanel.swift */; };
 		F39345042D18D79245501A99 /* ClipItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9308C1C6E8477F2B2B5EE607 /* ClipItem.swift */; };
 		F883A03C4490EBB0BD0E275C /* SystemServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BEB2ABAD90EE2FC038D51FF /* SystemServices.swift */; };
 /* End PBXBuildFile section */
@@ -45,6 +46,7 @@
 		9F72E91A9E997519ACFF861B /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		A365ACBF1BD7FB40ECCAD69A /* ClipDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipDatabase.swift; sourceTree = "<group>"; };
 		A5CDD3564647DE0C54F239E8 /* CopiaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CopiaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B1E81B92BF4FF1B86E4060E8 /* PreviewPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewPanel.swift; sourceTree = "<group>"; };
 		B6E7043919EEBE6F8FCF7A98 /* ClipStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipStore.swift; sourceTree = "<group>"; };
 		B8F7B47EE8DA3E74516C61EF /* ClipPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipPanelView.swift; sourceTree = "<group>"; };
 		BBC39AF346F625B35B7FB580 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -97,6 +99,7 @@
 				B8F7B47EE8DA3E74516C61EF /* ClipPanelView.swift */,
 				9AEE2FB0E86E119100B650A5 /* Motion.swift */,
 				E5C5CE571D13D802BDC79BE5 /* PanelController.swift */,
+				B1E81B92BF4FF1B86E4060E8 /* PreviewPanel.swift */,
 				25F36716A9C0D7F1D7C48231 /* SettingsView.swift */,
 			);
 			path = UI;
@@ -263,6 +266,7 @@
 				C1E542E8BA5B8AC20C5BE790 /* PanelController.swift in Sources */,
 				CE51F5764941ADF475B08991 /* PasteboardWatcher.swift in Sources */,
 				CFF25030D09358265490D4F6 /* Preferences.swift in Sources */,
+				EBFF3FEDD36027058013C76A /* PreviewPanel.swift in Sources */,
 				C68981192A0B14DCF7738987 /* SettingsView.swift in Sources */,
 				F883A03C4490EBB0BD0E275C /* SystemServices.swift in Sources */,
 				29BDA232F49D4952E3325E9E /* main.swift in Sources */,

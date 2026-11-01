@@ -173,7 +173,10 @@ struct ClipPanelView: View {
             .animation(cascade ? motion.rowEnter(index: index) : nil, value: model.isPresented)
             .onTapGesture { controller.activate(row.id, copyOnly: false) }
             .onContinuousHover { phase in
-                if case .active = phase { controller.hoverSelect(row.id) }
+                switch phase {
+                case .active: controller.hoverSelect(row.id)
+                case .ended: controller.hoverEnded()
+                }
             }
             .contextMenu {
                 Button(prefs.pasteOnSelect ? "Coller" : "Copier") { controller.activate(row.id, copyOnly: false) }
@@ -220,16 +223,17 @@ struct ClipPanelView: View {
     // MARK: - Pied
 
     private var footer: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             KeyHint(keys: ["↩"], label: prefs.pasteOnSelect ? "Coller" : "Copier")
             KeyHint(keys: ["⌘", "↩"], label: "Copier")
             KeyHint(keys: ["⌘", "P"], label: "Épingler")
-            KeyHint(keys: ["⌘", "⌫"], label: "Suppr.")
+            KeyHint(keys: ["⌘", "Y"], label: "Aperçu")
             Spacer(minLength: 0)
             Text("\(model.flat.count) / \(model.totalCount)")
                 .monospacedDigit()
                 .foregroundStyle(.tertiary)
                 .contentTransition(.numericText())
+                .fixedSize()
         }
         .font(.system(size: 11))
         .foregroundStyle(.secondary)
@@ -409,6 +413,8 @@ struct KeyHint: View {
             HStack(spacing: 2) { ForEach(keys, id: \.self) { KeyCap(key: $0) } }
             Text(label)
         }
+        .lineLimit(1)
+        .fixedSize()
     }
 }
 

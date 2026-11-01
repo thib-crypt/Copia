@@ -76,6 +76,7 @@ final class PanelController {
     }
 
     let model = PanelModel()
+    let preview: PreviewController
     var onOpenSettings: (() -> Void)?
 
     private let panel = FloatingPanel(size: PanelController.windowSize)
@@ -87,18 +88,24 @@ final class PanelController {
     private var searchTask: Task<Void, Never>?
     private var lastHide = Date.distantPast
     private var statusItemFrame: () -> NSRect? = { nil }
+    /// Position du pointeur à l'ouverture : tant qu'il n'a pas bougé, pas d'aperçu au survol.
+    private var openMouse: NSPoint?
 
     init(store: ClipStore, coordinator: CaptureCoordinator, prefs: Preferences) {
         self.store = store
         self.coordinator = coordinator
         self.prefs = prefs
+        self.preview = PreviewController(prefs: prefs)
         let root = ClipPanelView(model: model, prefs: prefs, coordinator: coordinator, controller: self)
         let host = NSHostingView(rootView: root)
         host.sizingOptions = []
         host.frame = NSRect(origin: .zero, size: Self.windowSize)
         panel.contentView = host
         panel.onResignKey = { [weak self] in self?.hide() }
-        model.onQueryChange = { [weak self] in self?.refresh() }
+        model.onQueryChange = { [weak self] in
+            self?.preview.hide(animated: false)
+            self?.refresh()
+        }
         store.onChange = { [weak self] in
             guard let self, self.model.isMounted else { return }
             self.refresh()
@@ -129,6 +136,7 @@ final class PanelController {
         refresh()
         model.selectedID = model.flat.first?.id
         model.needsAccessibility = prefs.pasteOnSelect && !Paster.isTrusted
+        openMouse = NSEvent.mouseLocation
 
         let placement = targetCardRect(for: origin)
         model.anchor = placement.anchor
@@ -154,6 +162,7 @@ final class PanelController {
         removeMonitors()
         lastHide = .now
         let (animation, duration) = motion.panelExit(byKeyboard: byKeyboard)
+        preview.hide(animated: animation != nil)
         let finish = { [weak self] in
             guard let self else { return }
             if !self.model.isPresented {
@@ -245,6 +254,7 @@ final class PanelController {
     func delete(_ id: Int64) {
         let flat = model.flat
         let idx = flat.firstIndex { $0.id == id } ?? 0
+        if preview.shownID == id { preview.hide(animated: false) }
         withAnimation(motion.listChange) {
             store.delete(id: id)
             refresh()
@@ -269,13 +279,30 @@ final class PanelController {
         let next = (idx + delta + flat.count) % flat.count
         model.keyboardDriven = true
         withAnimation(motion.keyboardSelection) { model.selectedID = flat[next].id }
+        preview.follow(item: flat[next].item, terms: model.highlightTerms, panelCard: cardFrame)
     }
 
-    /// Sélection au survol : instantanée.
+    private var cardFrame: NSRect { panel.frame.insetBy(dx: Self.shadowPad, dy: Self.shadowPad) }
+
+    /// Sélection au survol : instantanée. Un survol prolongé ouvre l'aperçu complet.
     func hoverSelect(_ id: Int64) {
-        guard model.selectedID != id else { return }
-        model.keyboardDriven = false
-        withAnimation(motion.hoverSelection) { model.selectedID = id }
+        if model.selectedID != id {
+            model.keyboardDriven = false
+            withAnimation(motion.hoverSelection) { model.selectedID = id }
+        }
+        if let openMouse {
+            guard NSEvent.mouseLocation != openMouse else { return }
+            self.openMouse = nil
+        }
+        guard let item = store.item(id: id) else { return }
+        preview.hover(item: item, terms: model.highlightTerms, panelCard: cardFrame)
+    }
+
+    func hoverEnded() { preview.hoverEnded() }
+
+    private func togglePreview() {
+        guard let id = model.selectedID, let item = store.item(id: id) else { return }
+        preview.toggle(item: item, terms: model.highlightTerms, panelCard: cardFrame)
     }
 
     // MARK: - Clavier
@@ -317,6 +344,8 @@ final class PanelController {
             if let id = model.selectedID { delete(id) }
         case kVK_ANSI_P where cmd:
             if let id = model.selectedID { togglePin(id) }
+        case kVK_ANSI_Y where cmd:
+            togglePreview()
         case kVK_ANSI_Comma where cmd:
             openSettings()
         case _ where cmd && Self.digitKeys.contains(code):
