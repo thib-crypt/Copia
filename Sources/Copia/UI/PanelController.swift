@@ -5,12 +5,59 @@ import Carbon.HIToolbox
 struct RowData: Identifiable, Equatable {
     let item: ClipItem
     let display: String
+    /// Ligne secondaire : texte reconnu d'une image, dossier des fichiers.
+    var detail: String? = nil
     var id: Int64 { item.id }
+
+    static func make(_ item: ClipItem, terms: [String]) -> RowData {
+        switch item.kind {
+        case .text, .richText:
+            return RowData(item: item, display: terms.isEmpty ? item.preview : Snippet.make(for: item, terms: terms))
+        case .image:
+            let ocr = item.hasPlainText ? (terms.isEmpty ? item.preview : Snippet.make(for: item, terms: terms)) : nil
+            return RowData(item: item, display: item.title, detail: ocr)
+        case .fileURL:
+            let folder = item.fileURLs.first?.deletingLastPathComponent().path.abbreviatedPath
+            return RowData(item: item, display: item.title, detail: folder)
+        }
+    }
+}
+
+enum KindFilter: Int, CaseIterable, Identifiable {
+    case all, text, images, files
+    var id: Int { rawValue }
+    var label: String {
+        switch self {
+        case .all: "Tout"
+        case .text: "Texte"
+        case .images: "Images"
+        case .files: "Fichiers"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .all: "square.stack"
+        case .text: "text.alignleft"
+        case .images: "photo"
+        case .files: "doc"
+        }
+    }
+    func matches(_ item: ClipItem) -> Bool {
+        switch self {
+        case .all: true
+        case .text: item.kind == .text || item.kind == .richText
+        case .images: item.kind == .image
+        case .files: item.kind == .fileURL
+        }
+    }
 }
 
 @Observable
 final class PanelModel {
     var query = "" { didSet { if query != oldValue { onQueryChange?() } } }
+    var filter: KindFilter = .all { didSet { if filter != oldValue { onQueryChange?() } } }
+    /// L'historique contient-il des images ou des fichiers ? (sinon les filtres sont masqués)
+    var hasMedia = false
     var pinned: [RowData] = []
     var rows: [RowData] = []
     var selectedID: Int64?
@@ -133,6 +180,7 @@ final class PanelController {
         let byKeyboard: Bool
         if case .hotKey = origin { byKeyboard = true } else { byKeyboard = false }
         model.query = ""
+        model.filter = .all
         refresh()
         model.selectedID = model.flat.first?.id
         model.needsAccessibility = prefs.pasteOnSelect && !Paster.isTrusted
@@ -188,18 +236,24 @@ final class PanelController {
 
     func refresh() {
         let q = model.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filter = model.filter
         model.totalCount = store.count
+        model.hasMedia = store.items.contains { $0.kind == .image || $0.kind == .fileURL }
+        if !model.hasMedia && filter != .all { model.filter = .all; return }
         searchTask?.cancel()
         if q.isEmpty {
             model.highlightTerms = []
-            model.pinned = store.items.filter(\.pinned).map { RowData(item: $0, display: $0.preview) }
-            let recent = store.items.lazy.filter { !$0.pinned }.prefix(max(prefs.displayCount, 1))
-            model.rows = recent.map { RowData(item: $0, display: $0.preview) }
-            model.hiddenCount = max(store.count - model.pinned.count - model.rows.count, 0)
+            let visible = store.items.lazy.filter(filter.matches)
+            model.pinned = visible.filter(\.pinned).map { RowData.make($0, terms: []) }
+            let recent = visible.filter { !$0.pinned }.prefix(max(prefs.displayCount, 1))
+            model.rows = recent.map { RowData.make($0, terms: []) }
+            let total = filter == .all ? store.count : visible.count
+            model.hiddenCount = max(total - model.pinned.count - model.rows.count, 0)
             fixSelection(preferFirst: false)
             return
         }
-        let candidates = store.searchCandidates()
+        let allowed = filter == .all ? nil : Set(store.items.lazy.filter(filter.matches).map(\.id))
+        let candidates = store.searchCandidates().filter { allowed?.contains($0.id) ?? true }
         let terms = q.split(whereSeparator: \.isWhitespace).map(String.init)
         searchTask = Task { [weak self] in
             let hits = await Task.detached(priority: .userInitiated) {
@@ -209,9 +263,7 @@ final class PanelController {
                   self.model.query.trimmingCharacters(in: .whitespacesAndNewlines) == q else { return }
             let byID = Dictionary(self.store.items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             self.model.pinned = []
-            self.model.rows = hits.compactMap { byID[$0.id] }.map {
-                RowData(item: $0, display: Snippet.make(for: $0, terms: terms))
-            }
+            self.model.rows = hits.compactMap { byID[$0.id] }.map { RowData.make($0, terms: terms) }
             self.model.highlightTerms = terms
             self.model.hiddenCount = 0
             self.fixSelection(preferFirst: true)
@@ -227,9 +279,14 @@ final class PanelController {
 
     // MARK: - Actions
 
-    func activate(_ id: Int64, copyOnly: Bool, byKeyboard: Bool = false) {
+    /// - Parameter plain: ⌥ : texte brut (texte riche sans mise en forme, chemins des fichiers, texte d'une image).
+    func activate(_ id: Int64, copyOnly: Bool, plain: Bool = false, byKeyboard: Bool = false) {
         guard let item = store.item(id: id) else { return }
-        coordinator.copyToPasteboard(item)
+        let asPlain = item.kind == .richText ? plain != prefs.pastePlainByDefault : plain
+        guard coordinator.copyToPasteboard(item, plain: asPlain) else {
+            NSSound.beep() // ex. image sans texte reconnu en mode « texte brut »
+            return
+        }
         prefs.statPastes += 1
         if prefs.playSound { NSSound(named: "Pop")?.play() }
         let shouldPaste = prefs.pasteOnSelect && !copyOnly
@@ -242,6 +299,70 @@ final class PanelController {
                 Paster.requestTrust()
             }
         }
+    }
+
+    /// Ouvre le fichier copié ou l'image (dans Aperçu).
+    func open(_ id: Int64) {
+        guard let item = store.item(id: id) else { return }
+        switch item.kind {
+        case .fileURL:
+            let urls = item.fileURLs.filter { FileManager.default.fileExists(atPath: $0.path) }
+            guard !urls.isEmpty else { NSSound.beep(); return }
+            hide(byKeyboard: true) { urls.forEach { NSWorkspace.shared.open($0) } }
+        case .image:
+            guard let url = exportImage(item) else { NSSound.beep(); return }
+            hide(byKeyboard: true) { NSWorkspace.shared.open(url) }
+        default:
+            NSSound.beep()
+        }
+    }
+
+    /// Affiche les fichiers copiés dans le Finder.
+    func reveal(_ id: Int64) {
+        guard let item = store.item(id: id) else { return }
+        let urls: [URL]
+        switch item.kind {
+        case .fileURL: urls = item.fileURLs.filter { FileManager.default.fileExists(atPath: $0.path) }
+        case .image: urls = exportImage(item).map { [$0] } ?? []
+        default: urls = []
+        }
+        guard !urls.isEmpty else { NSSound.beep(); return }
+        hide(byKeyboard: true) { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+    }
+
+    /// Copie l'image dans un fichier temporaire au nom lisible (« Image Copia 14-32-05.heic »).
+    private func exportImage(_ item: ClipItem) -> URL? {
+        guard let blob = item.blobPath, BlobStore.exists(blob) else { return nil }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("Copia", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let stamp = item.createdAt.formatted(.dateTime.year().month(.twoDigits).day(.twoDigits).hour().minute().second())
+            .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        let url = dir.appendingPathComponent("Image Copia \(stamp).\(item.meta.format ?? "png")")
+        try? FileManager.default.removeItem(at: url)
+        do { try FileManager.default.copyItem(at: BlobStore.url(blob), to: url) } catch { return nil }
+        return url
+    }
+
+    /// Glisser une ligne vers une autre app.
+    func dragProvider(_ id: Int64) -> NSItemProvider {
+        guard let item = store.item(id: id) else { return NSItemProvider() }
+        switch item.kind {
+        case .image:
+            if let url = exportImage(item), let p = NSItemProvider(contentsOf: url) { return p }
+        case .fileURL:
+            if let url = item.fileURLs.first(where: { FileManager.default.fileExists(atPath: $0.path) }),
+               let p = NSItemProvider(contentsOf: url) { return p }
+        default:
+            break
+        }
+        return NSItemProvider(object: item.plainText as NSString)
+    }
+
+    func cycleFilter(_ delta: Int) {
+        guard model.hasMedia else { return }
+        let all = KindFilter.allCases
+        let next = (model.filter.rawValue + delta + all.count) % all.count
+        withAnimation(motion.micro) { model.filter = all[next] }
     }
 
     func togglePin(_ id: Int64) {
@@ -337,7 +458,17 @@ final class PanelController {
         case kVK_UpArrow: move(-1)
         case kVK_Tab: move(flags.contains(.shift) ? -1 : 1)
         case kVK_Return, kVK_ANSI_KeypadEnter:
-            if let id = model.selectedID { activate(id, copyOnly: cmd, byKeyboard: true) }
+            if let id = model.selectedID {
+                activate(id, copyOnly: cmd, plain: flags.contains(.option), byKeyboard: true)
+            }
+        case kVK_ANSI_O where cmd:
+            if let id = model.selectedID { open(id) }
+        case kVK_ANSI_R where cmd:
+            if let id = model.selectedID { reveal(id) }
+        case kVK_LeftArrow where cmd:
+            cycleFilter(-1)
+        case kVK_RightArrow where cmd:
+            cycleFilter(1)
         case kVK_Escape:
             if model.query.isEmpty { hide(byKeyboard: true) } else { model.query = "" }
         case kVK_Delete where cmd:

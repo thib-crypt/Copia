@@ -38,16 +38,38 @@ nonisolated final class ClipDatabase: @unchecked Sendable {
               source_bundle TEXT,
               source_name TEXT,
               is_dictation INTEGER NOT NULL DEFAULT 0,
-              blob_path TEXT
+              blob_path TEXT,
+              meta TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_clips_last ON clips(last_copied DESC);
             CREATE INDEX IF NOT EXISTS idx_clips_hash ON clips(hash);
-            PRAGMA user_version = 1;
             """)
+            migrate()
         }
     }
 
     deinit { sqlite3_close_v2(db) }
+
+    /// v1 → v2 : colonne `meta` (images, fichiers, texte riche).
+    private func migrate() {
+        var version: Int32 = 0
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "PRAGMA user_version", -1, &stmt, nil) == SQLITE_OK, sqlite3_step(stmt) == SQLITE_ROW {
+            version = sqlite3_column_int(stmt, 0)
+        }
+        sqlite3_finalize(stmt)
+        if version < 2 {
+            var hasMeta = false
+            if sqlite3_prepare_v2(db, "PRAGMA table_info(clips)", -1, &stmt, nil) == SQLITE_OK {
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    if Self.string(stmt, 1) == "meta" { hasMeta = true }
+                }
+            }
+            sqlite3_finalize(stmt)
+            if !hasMeta { exec("ALTER TABLE clips ADD COLUMN meta TEXT;") }
+            exec("PRAGMA user_version = 2;")
+        }
+    }
 
     // MARK: - Lecture (au lancement uniquement)
 
@@ -56,7 +78,7 @@ nonisolated final class ClipDatabase: @unchecked Sendable {
             var items: [ClipItem] = []
             let sql = """
             SELECT id, kind, text, hash, created, last_copied, copy_count, pinned,
-                   source_bundle, source_name, is_dictation, blob_path
+                   source_bundle, source_name, is_dictation, blob_path, meta
             FROM clips ORDER BY last_copied DESC
             """
             var stmt: OpaquePointer?
@@ -75,7 +97,8 @@ nonisolated final class ClipDatabase: @unchecked Sendable {
                     sourceBundleID: Self.string(stmt, 8),
                     sourceAppName: Self.string(stmt, 9),
                     isDictation: sqlite3_column_int(stmt, 10) != 0,
-                    blobPath: Self.string(stmt, 11)
+                    blobPath: Self.string(stmt, 11),
+                    meta: ClipMeta.decode(Self.string(stmt, 12))
                 ))
             }
             return items
@@ -90,8 +113,8 @@ nonisolated final class ClipDatabase: @unchecked Sendable {
             exec("BEGIN;")
             let sql = """
             INSERT OR REPLACE INTO clips(id, kind, text, hash, created, last_copied, copy_count, pinned,
-                                         source_bundle, source_name, is_dictation, blob_path)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                                         source_bundle, source_name, is_dictation, blob_path, meta)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
             """
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { exec("ROLLBACK;"); return }
@@ -108,6 +131,7 @@ nonisolated final class ClipDatabase: @unchecked Sendable {
                 Self.bind(stmt, 10, it.sourceAppName)
                 sqlite3_bind_int(stmt, 11, it.isDictation ? 1 : 0)
                 Self.bind(stmt, 12, it.blobPath)
+                Self.bind(stmt, 13, it.meta.encoded())
                 sqlite3_step(stmt)
                 sqlite3_reset(stmt)
             }

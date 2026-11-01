@@ -31,7 +31,7 @@ enum SettingsPage: String, CaseIterable, Identifiable, Hashable {
         case .history: "Combien de copies garder, combien en montrer."
         case .dictation: "Fini les allers-retours de VoiceInk dans l'historique."
         case .privacy: "Ce que Copia ne doit jamais retenir."
-        case .media: "Captures d'écran, images et fichiers copiés."
+        case .media: "Captures d'écran, images, fichiers du Finder et texte mis en forme."
         case .performance: "Réglé pour ton Mac Apple Silicon."
         case .importer: "Récupère ton historique CopyClip."
         case .about: "Ta version personnelle de CopyClip."
@@ -133,7 +133,7 @@ struct SettingsRootView: View {
         case .history: HistoryPage(ctx: ctx)
         case .dictation: DictationPage(prefs: ctx.prefs)
         case .privacy: PrivacyPage(prefs: ctx.prefs)
-        case .media: MediaPage(prefs: ctx.prefs)
+        case .media: MediaPage(ctx: ctx)
         case .performance: PerformancePage(ctx: ctx)
         case .importer: ImportPage(ctx: ctx)
         case .about: AboutPage(ctx: ctx)
@@ -147,14 +147,6 @@ struct SidebarRow: View {
         HStack(spacing: 9) {
             IconTile(symbol: page.symbol, tint: page.tint, size: 22)
             Text(page.title)
-            if page == .media {
-                Spacer()
-                Text("Bientôt")
-                    .font(.system(size: 9, weight: .bold))
-                    .padding(.horizontal, 5).padding(.vertical, 1.5)
-                    .background(Color.green.opacity(0.18), in: Capsule())
-                    .foregroundStyle(.green)
-            }
         }
         .padding(.vertical, 1)
     }
@@ -761,26 +753,101 @@ enum AppPicker {
     }
 }
 
-// MARK: - Images & fichiers (phase 2)
+// MARK: - Images & fichiers
 
 struct MediaPage: View {
-    @Bindable var prefs: Preferences
+    let ctx: AppContext
+    @State private var confirmPurge = false
+
+    private let quotaOptions: [(Int, String)] = [(256, "256 Mo"), (512, "512 Mo"), (1024, "1 Go"),
+                                                 (2048, "2 Go"), (5120, "5 Go")]
+    private let maxImageOptions: [(Int, String)] = [(10, "10 Mo"), (20, "20 Mo"), (40, "40 Mo"), (100, "100 Mo")]
 
     var body: some View {
+        @Bindable var prefs = ctx.prefs
+        let used = ctx.store.mediaBytes
         SettingsPageScaffold(page: .media) {
             Section {
-                Toggle(isOn: .constant(false)) {
-                    Text("Enregistrer les images et captures d'écran")
-                    Text("Arrive dans la prochaine version.")
+                HStack(spacing: 10) {
+                    StatTile(value: ctx.store.count(of: .image), label: "images", symbol: "photo.fill", tint: .green)
+                    StatTile(value: ctx.store.count(of: .fileURL), label: "copies de fichiers", symbol: "doc.fill", tint: .blue)
+                    StatTile(value: ctx.store.count(of: .richText), label: "textes mis en forme", symbol: "textformat", tint: .purple)
                 }
-                .disabled(true)
+                .animation(Curve.easeOut(0.2), value: ctx.store.count)
             }
-            Section("Au programme") {
-                RoadmapRow(symbol: "photo", title: "Images & captures", detail: "Stockées en HEIC compressé, miniatures nettes Retina, doublons détectés.")
-                RoadmapRow(symbol: "doc", title: "Fichiers du Finder", detail: "Recopie les fichiers copiés, avec leurs icônes.")
-                RoadmapRow(symbol: "textformat", title: "Texte riche", detail: "Garde la mise en forme, ⌥↩ pour coller en texte brut.")
-                RoadmapRow(symbol: "text.viewfinder", title: "Recherche dans les images", detail: "Le texte des captures (OCR Vision) devient cherchable.")
-                RoadmapRow(symbol: "internaldrive", title: "Plafond disque", detail: "Taille maximale réglable, purge automatique des plus anciennes.")
+            Section("Enregistrer") {
+                Toggle(isOn: $prefs.captureImages) {
+                    Text("Images et captures d'écran")
+                    Text("⌃⇧⌘4, « Copier l'image » d'un navigateur, Aperçu, Photos…")
+                }
+                Toggle(isOn: $prefs.captureFiles) {
+                    Text("Fichiers copiés dans le Finder")
+                    Text("Recolle les fichiers eux-mêmes ; ⌥↩ colle leurs chemins.")
+                }
+                Toggle(isOn: $prefs.captureRichText) {
+                    Text("Mise en forme du texte")
+                    Text("Gras, liens, couleurs, tableaux (RTF / HTML). Sinon, seul le texte brut est gardé.")
+                }
+            }
+            Section("Images") {
+                Toggle(isOn: $prefs.ocrImages) {
+                    Text("Rechercher le texte dans les images")
+                    Text("Reconnaissance de texte Vision, sur ton Mac, en arrière-plan. Tape un mot d'une capture pour la retrouver.")
+                }
+                .disabled(!prefs.captureImages)
+                Picker(selection: $prefs.imageStorage) {
+                    ForEach(ImageStorage.allCases) { Text($0.label).tag($0) }
+                } label: {
+                    Text("Stockage")
+                    Text(prefs.imageStorage == .heic
+                         ? "HEIC qualité 90 % : 5 à 10× plus léger, différence invisible à l'œil."
+                         : "Garde les octets exacts de l'image (PNG des captures d'écran).")
+                }
+                .disabled(!prefs.captureImages)
+                Picker(selection: $prefs.maxImageMB) {
+                    ForEach(maxImageOptions, id: \.0) { Text($0.1).tag($0.0) }
+                } label: {
+                    Text("Ignorer les images de plus de")
+                    if ctx.watcher.skippedTooLarge > 0 {
+                        Text("\(ctx.watcher.skippedTooLarge) image(s) ignorée(s) depuis le lancement.")
+                    }
+                }
+                .disabled(!prefs.captureImages)
+            }
+            Section {
+                LabeledContent {
+                    Text(Bytes.string(used)).monospacedDigit()
+                } label: {
+                    Text("Espace utilisé")
+                    ProgressView(value: min(Double(used) / Double(prefs.diskQuotaBytes), 1))
+                        .tint(used > prefs.diskQuotaBytes * 9 / 10 ? .orange : .green)
+                }
+                Picker(selection: $prefs.diskQuotaMB) {
+                    ForEach(quotaOptions, id: \.0) { Text($0.1).tag($0.0) }
+                } label: {
+                    Text("Plafond")
+                    Text("Au-delà, les images les plus anciennes partent d'abord. Les épinglées sont toujours gardées.")
+                }
+                HStack {
+                    Button("Afficher dans le Finder") { NSWorkspace.shared.open(BlobStore.directory) }
+                    Spacer()
+                    Button("Supprimer toutes les images…", role: .destructive) { confirmPurge = true }
+                        .disabled(ctx.store.count(of: .image) == 0)
+                        .confirmationDialog("Supprimer toutes les images ?", isPresented: $confirmPurge) {
+                            Button("Supprimer", role: .destructive) { ctx.store.deleteAll(kind: .image) }
+                        } message: {
+                            Text("Les images épinglées sont conservées. Le texte et les fichiers ne sont pas touchés.")
+                        }
+                }
+                .controlSize(.small)
+            } header: {
+                Text("Disque")
+            }
+            Section("Collage") {
+                Toggle(isOn: $prefs.pastePlainByDefault) {
+                    Text("Coller le texte riche sans mise en forme")
+                    Text("⌥↩ fait alors l'inverse : colle avec la mise en forme d'origine.")
+                }
             }
         }
     }
@@ -993,6 +1060,10 @@ struct AboutPage: View {
                 ShortcutRow(keys: ["↑", "↓"], label: "Naviguer")
                 ShortcutRow(keys: ["↩"], label: "Coller au curseur")
                 ShortcutRow(keys: ["⌘", "↩"], label: "Copier sans coller")
+                ShortcutRow(keys: ["⌥", "↩"], label: "Coller en texte brut (chemins, texte d'une image)")
+                ShortcutRow(keys: ["⌘", "O"], label: "Ouvrir le fichier ou l'image")
+                ShortcutRow(keys: ["⌘", "R"], label: "Afficher dans le Finder")
+                ShortcutRow(keys: ["⌘", "←", "→"], label: "Filtrer : tout, texte, images, fichiers")
                 ShortcutRow(keys: ["⌘", "1…9"], label: "Coller la copie n°1 à 9")
                 ShortcutRow(keys: ["⌘", "Y"], label: "Aperçu du contenu complet")
                 ShortcutRow(keys: ["⌘", "P"], label: "Épingler / désépingler")

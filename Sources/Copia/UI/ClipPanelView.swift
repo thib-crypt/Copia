@@ -33,6 +33,7 @@ struct ClipPanelView: View {
         styled(
             VStack(spacing: 0) {
                 header
+                if model.hasMedia { filterBar }
                 Rectangle().fill(.primary.opacity(0.07)).frame(height: 1)
                 content
                 if model.needsAccessibility { accessibilityBanner }
@@ -105,6 +106,37 @@ struct ClipPanelView: View {
         .onChange(of: model.focusToken) { searchFocused = true }
     }
 
+    // MARK: - Filtres
+
+    private var filterBar: some View {
+        HStack(spacing: 4) {
+            ForEach(KindFilter.allCases) { f in
+                let active = model.filter == f
+                Button { withAnimation(motion.micro) { model.filter = f } } label: {
+                    Label(f.label, systemImage: f.symbol)
+                        .font(.system(size: 11, weight: active ? .semibold : .medium))
+                        .padding(.horizontal, 9).frame(height: 22)
+                        .background {
+                            if active {
+                                Capsule().fill(Color.accentColor.opacity(0.16))
+                                    .matchedGeometryEffect(id: "filter", in: selectionNS)
+                            }
+                        }
+                        .foregroundStyle(active ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer(minLength: 0)
+            HStack(spacing: 2) { KeyCap(key: "⌘"); KeyCap(key: "←"); KeyCap(key: "→") }
+                .foregroundStyle(.tertiary)
+                .scaleEffect(0.9)
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+        .transition(.opacity)
+    }
+
     // MARK: - Liste
 
     @ViewBuilder
@@ -172,7 +204,8 @@ struct ClipPanelView: View {
             .opacity(!cascade || model.isPresented ? 1 : 0)
             .offset(y: !cascade || model.isPresented ? 0 : 6)
             .animation(cascade ? motion.rowEnter(index: index) : nil, value: model.isPresented)
-            .onTapGesture { controller.activate(row.id, copyOnly: false) }
+            .onTapGesture { controller.activate(row.id, copyOnly: false, plain: NSEvent.modifierFlags.contains(.option)) }
+            .onDrag { controller.dragProvider(row.id) }
             .onContinuousHover { phase in
                 switch phase {
                 case .active: controller.hoverSelect(row.id)
@@ -182,6 +215,24 @@ struct ClipPanelView: View {
             .contextMenu {
                 Button(prefs.pasteOnSelect ? "Coller" : "Copier") { controller.activate(row.id, copyOnly: false) }
                 Button("Copier seulement") { controller.activate(row.id, copyOnly: true) }
+                switch row.item.kind {
+                case .richText:
+                    Button(prefs.pastePlainByDefault ? "Coller avec la mise en forme" : "Coller en texte brut") {
+                        controller.activate(row.id, copyOnly: false, plain: true)
+                    }
+                case .image:
+                    if row.item.hasPlainText {
+                        Button("Copier le texte reconnu") { controller.activate(row.id, copyOnly: true, plain: true) }
+                    }
+                    Button("Ouvrir dans Aperçu") { controller.open(row.id) }
+                    Button("Afficher dans le Finder") { controller.reveal(row.id) }
+                case .fileURL:
+                    Button("Coller les chemins") { controller.activate(row.id, copyOnly: false, plain: true) }
+                    Button("Ouvrir") { controller.open(row.id) }
+                    Button("Afficher dans le Finder") { controller.reveal(row.id) }
+                case .text:
+                    EmptyView()
+                }
                 Divider()
                 Button(row.item.pinned ? "Désépingler" : "Épingler") { controller.togglePin(row.id) }
                 Button("Supprimer", role: .destructive) { controller.delete(row.id) }
@@ -190,13 +241,13 @@ struct ClipPanelView: View {
 
     private var emptyState: some View {
         VStack(spacing: 10) {
-            Image(systemName: model.query.isEmpty ? "doc.on.clipboard" : "text.magnifyingglass")
+            Image(systemName: !model.query.isEmpty ? "text.magnifyingglass" : model.filter == .all ? "doc.on.clipboard" : model.filter.symbol)
                 .font(.system(size: 36, weight: .light))
                 .foregroundStyle(.tertiary)
-            Text(model.query.isEmpty ? "Ton historique est vide" : "Aucun résultat")
+            Text(!model.query.isEmpty ? "Aucun résultat" : model.filter == .all ? "Ton historique est vide" : "Rien dans « \(model.filter.label) »")
                 .font(.system(size: 14, weight: .semibold))
             Text(model.query.isEmpty
-                 ? "Copie du texte n'importe où, il apparaîtra ici."
+                 ? "Copie du texte, une image ou des fichiers : ils apparaîtront ici."
                  : "Rien ne ressemble à « \(model.query) ».")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
@@ -223,11 +274,23 @@ struct ClipPanelView: View {
 
     // MARK: - Pied
 
+    /// Raccourci utile pour la sélection : ⌥↩ sur du texte riche, des fichiers ou une image lisible.
+    @ViewBuilder
+    private var contextualHint: some View {
+        let item = model.flat.first { $0.id == model.selectedID }?.item
+        switch item?.kind {
+        case .richText: KeyHint(keys: ["⌥", "↩"], label: prefs.pastePlainByDefault ? "Mis en forme" : "Texte brut")
+        case .fileURL: KeyHint(keys: ["⌘", "R"], label: "Finder")
+        case .image: KeyHint(keys: ["⌘", "O"], label: "Ouvrir")
+        default: KeyHint(keys: ["⌘", "P"], label: "Épingler")
+        }
+    }
+
     private var footer: some View {
         HStack(spacing: 10) {
             KeyHint(keys: ["↩"], label: prefs.pasteOnSelect ? "Coller" : "Copier")
             KeyHint(keys: ["⌘", "↩"], label: "Copier")
-            KeyHint(keys: ["⌘", "P"], label: "Épingler")
+            contextualHint
             KeyHint(keys: ["⌘", "Y"], label: "Aperçu")
             Spacer(minLength: 0)
             Text("\(model.flat.count) / \(model.totalCount)")
@@ -258,13 +321,20 @@ struct ClipRowView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 11) {
-            SourceIcon(item: row.item, isSelected: isSelected)
+            ClipLeadingView(item: row.item, isSelected: isSelected)
             VStack(alignment: .leading, spacing: 3) {
                 Text(attributedText)
-                    .font(.system(size: 13))
-                    .lineLimit(lines)
-                    .truncationMode(.tail)
+                    .font(.system(size: 13, weight: isMedia ? .medium : .regular))
+                    .lineLimit(isMedia ? 1 : lines)
+                    .truncationMode(isMedia ? .middle : .tail)
                     .foregroundStyle(isSelected ? Color.white : Color.primary)
+                if let detail = row.detail, !detail.isEmpty {
+                    Text(highlight(detail, size: 11.5))
+                        .font(.system(size: 11.5))
+                        .lineLimit(1)
+                        .truncationMode(row.item.kind == .fileURL ? .head : .tail)
+                        .foregroundStyle(isSelected ? AnyShapeStyle(.white.opacity(0.85)) : AnyShapeStyle(.secondary))
+                }
                 metaLine
             }
             Spacer(minLength: 6)
@@ -297,8 +367,24 @@ struct ClipRowView: View {
         .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
     }
 
+    private var isMedia: Bool { row.item.kind == .image || row.item.kind == .fileURL }
+
+    private var filesMissing: Bool {
+        row.item.kind == .fileURL && !row.item.fileURLs.contains { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
     private var metaLine: some View {
         HStack(spacing: 5) {
+            switch row.item.kind {
+            case .richText:
+                KindBadge(label: "Mis en forme", symbol: "textformat", tint: .purple, isSelected: isSelected)
+            case .image where row.item.meta.hasOCR == true && row.detail == nil:
+                KindBadge(label: "Texte", symbol: "text.viewfinder", tint: .teal, isSelected: isSelected)
+            case .fileURL where filesMissing:
+                KindBadge(label: "Introuvable", symbol: "exclamationmark.triangle.fill", tint: .red, isSelected: isSelected)
+            default:
+                EmptyView()
+            }
             if row.item.isDictation {
                 Label("Dictée", systemImage: "waveform")
                     .font(.system(size: 9.5, weight: .semibold))
@@ -326,21 +412,29 @@ struct ClipRowView: View {
         var parts = [RelativeTime.string(for: row.item.lastCopiedAt)]
         if let app = row.item.sourceAppName, !app.isEmpty { parts.append(app) }
         if row.item.copyCount > 1 { parts.append("×\(row.item.copyCount)") }
-        let n = row.item.text.count
-        if n > 280 { parts.append(n >= 10_000 ? "\(n / 1000) k car." : "\(n.formatted()) car.") }
+        switch row.item.kind {
+        case .text, .richText:
+            let n = row.item.text.count
+            if n > 280 { parts.append(n >= 10_000 ? "\(n / 1000) k car." : "\(n.formatted()) car.") }
+        case .image:
+            if let b = row.item.meta.bytes { parts.append(Bytes.string(b)) }
+        case .fileURL:
+            break
+        }
         return parts.joined(separator: " · ")
     }
 
-    private var attributedText: AttributedString {
-        var a = AttributedString(row.display)
+    private var attributedText: AttributedString { highlight(row.display, size: 13) }
+
+    private func highlight(_ s: String, size: CGFloat) -> AttributedString {
+        var a = AttributedString(s)
         guard !terms.isEmpty else { return a }
-        let s = row.display
         for t in terms where !t.isEmpty {
             var searchRange = s.startIndex..<s.endIndex
             while let r = s.range(of: t, options: [.caseInsensitive, .diacriticInsensitive], range: searchRange) {
                 if let ar = Range(r, in: a) {
                     a[ar].backgroundColor = isSelected ? Color.white.opacity(0.28) : Color.yellow.opacity(0.38)
-                    a[ar].font = .system(size: 13, weight: .semibold)
+                    a[ar].font = .system(size: size, weight: .semibold)
                 }
                 searchRange = r.upperBound..<s.endIndex
             }

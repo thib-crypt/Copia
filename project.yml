@@ -1,5 +1,6 @@
 name: Copia
 options:
+  developmentLanguage: fr
   bundleIdPrefix: com.thibault
   deploymentTarget:
     macOS: "26.0"
@@ -30,8 +31,10 @@ targets:
       path: Sources/Copia/Info.plist
       properties:
         CFBundleDisplayName: Copia
-        CFBundleShortVersionString: "1.0.0"
-        CFBundleVersion: "1"
+        CFBundleDevelopmentRegion: fr
+        CFBundleLocalizations: [fr]
+        CFBundleShortVersionString: "1.1.0"
+        CFBundleVersion: "2"
         LSUIElement: true
         LSApplicationCategoryType: public.app-category.productivity
         NSHumanReadableCopyright: "Copia — version personnelle"
@@ -49,6 +52,8 @@ targets:
       - path: Tests/CopiaTests
       - path: Sources/Copia/Core/FuzzySearch.swift
       - path: Sources/Copia/Core/DedupEngine.swift
+      - path: Sources/Copia/Core/ContentClassifier.swift
+      - path: Sources/Copia/Core/ClipItem.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.thibault.copia.tests

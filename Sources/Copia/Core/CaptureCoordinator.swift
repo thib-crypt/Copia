@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import UniformTypeIdentifiers
 
 /// Relie le surveillant du presse-papier, le moteur anti-doublons et l'historique.
 @Observable
@@ -8,6 +9,10 @@ final class CaptureCoordinator {
     @ObservationIgnored let watcher: PasteboardWatcher
     @ObservationIgnored private let prefs: Preferences
     @ObservationIgnored private var engine: DedupEngine
+    /// Images reçues mais pas encore encodées : on peut déjà les recoller.
+    @ObservationIgnored private var pendingImages: [Int64: (data: Data, type: String)] = [:]
+    /// Fournisseur paresseux (PNG/TIFF) de la dernière image recollée : vivant tant qu'elle est au presse-papier.
+    @ObservationIgnored private var imageProvider: LazyImageProvider?
 
     /// Hash du contenu actuellement dans le presse-papier (pour le repère « actuel »).
     private(set) var currentHash: String?
@@ -17,18 +22,20 @@ final class CaptureCoordinator {
         self.watcher = watcher
         self.prefs = prefs
         self.engine = DedupEngine(config: prefs.dedupConfig)
+        watcher.options = prefs.captureOptions
         watcher.onChange = { [weak self] snap in self?.handle(snap) }
-        if let text = NSPasteboard.general.string(forType: .string) {
-            let h = ClipHasher.hash(text, trimWhitespace: prefs.trimWhitespaceForDedup)
+        if let snap = watcher.currentSnapshot() {
+            let h = snap.hash(trimWhitespace: prefs.trimWhitespaceForDedup)
             engine.noteOwnWrite(hash: h, time: Date.now.timeIntervalSinceReferenceDate)
             currentHash = h
         }
     }
 
     func refreshConfig() { engine.config = prefs.dedupConfig }
+    func refreshCaptureOptions() { watcher.options = prefs.captureOptions }
 
     private func handle(_ snap: PasteboardSnapshot) {
-        let hash = ClipHasher.hash(snap.text, trimWhitespace: prefs.trimWhitespaceForDedup)
+        let hash = snap.hash(trimWhitespace: prefs.trimWhitespaceForDedup)
         let now = Date.now
         guard !prefs.paused else {
             engine.noteOwnWrite(hash: hash, time: now.timeIntervalSinceReferenceDate)
@@ -52,6 +59,7 @@ final class CaptureCoordinator {
         case .bump(let markDictation):
             if let existing {
                 store.bump(id: existing.id, at: now, latestText: snap.text, markDictation: markDictation)
+                refreshRichPayload(existing, with: snap)
                 prefs.statMerged += 1
             }
         case .silentRestore(let dictationHash):
@@ -66,10 +74,84 @@ final class CaptureCoordinator {
 
     private func insert(_ snap: PasteboardSnapshot, hash: String, isDictation: Bool, at date: Date) {
         let (bundle, name) = source(for: snap)
-        store.insert(text: snap.text, hash: hash, sourceBundleID: bundle, sourceAppName: name,
-                     isDictation: isDictation, at: date)
+        switch snap.content {
+        case .text(let text):
+            store.insert(text: text, hash: hash, sourceBundleID: bundle, sourceAppName: name,
+                         isDictation: isDictation, at: date)
+        case .rich(let text, let payload):
+            let (blob, meta) = writeRich(payload)
+            store.insert(kind: blob == nil ? .text : .richText, text: text, hash: hash, sourceBundleID: bundle,
+                         sourceAppName: name, isDictation: isDictation, blobPath: blob, meta: meta, at: date)
+        case .files(let urls):
+            store.insert(kind: .fileURL, text: urls.map(\.path).joined(separator: "\n"), hash: hash,
+                         sourceBundleID: bundle, sourceAppName: name, isDictation: false, at: date)
+        case .image(let data, let type):
+            let item = store.insert(kind: .image, text: "", hash: hash, sourceBundleID: bundle, sourceAppName: name,
+                                    isDictation: false, meta: ClipMeta(processing: true), at: date)
+            processImage(id: item.id, data: data, type: type)
+        }
         if isDictation { prefs.statDictations += 1 }
         store.enforceLimits(maxItems: prefs.maxStored, retentionDays: prefs.retentionDays)
+    }
+
+    /// Texte identique recopié : la copie reflète la dernière forme (riche ou brute).
+    private func refreshRichPayload(_ existing: ClipItem, with snap: PasteboardSnapshot) {
+        switch snap.content {
+        case .rich(_, let payload):
+            let (blob, meta) = writeRich(payload)
+            guard let blob else { return }
+            store.update(id: existing.id) { $0.kind = .richText; $0.blobPath = blob; $0.meta = meta }
+            store.enforceDiskQuota(maxBytes: prefs.diskQuotaBytes)
+        case .text where existing.kind == .richText:
+            store.update(id: existing.id) { $0.kind = .text; $0.blobPath = nil; $0.meta = .empty }
+        default:
+            break
+        }
+    }
+
+    private func writeRich(_ payload: [String: Data]) -> (String?, ClipMeta) {
+        guard let data = BlobStore.encodeRich(payload) else { return (nil, .empty) }
+        let name = BlobStore.newName(ext: "rich")
+        Task.detached(priority: .utility) { BlobStore.write(data, name: name) }
+        return (name, ClipMeta(bytes: data.count, richTypes: payload.keys.sorted()))
+    }
+
+    private func processImage(id: Int64, data: Data, type: String) {
+        pendingImages[id] = (data, type)
+        let storage = prefs.imageStorage
+        let ocr = prefs.ocrImages
+        Task { [weak self] in
+            // 1. Encodage + miniature : l'image est utilisable en une fraction de seconde.
+            let result = await Task.detached(priority: .utility) {
+                ImageProcessor.process(data: data, sourceType: type, storage: storage)
+            }.value
+            guard let self else { return }
+            self.pendingImages[id] = nil
+            guard let result else {
+                self.store.delete(id: id) // image illisible : pas de ligne vide
+                return
+            }
+            let alive = self.store.update(id: id) {
+                $0.blobPath = result.blobName
+                $0.meta = result.meta
+            }
+            guard alive else {
+                BlobStore.remove([result.blobName] + [result.meta.thumb].compactMap { $0 })
+                return
+            }
+            self.store.enforceDiskQuota(maxBytes: self.prefs.diskQuotaBytes)
+
+            // 2. Texte reconnu, en arrière-plan, sans bloquer quoi que ce soit.
+            guard ocr else { return }
+            let blob = result.blobName
+            let text = await Task.detached(priority: .background) { await ImageProcessor.recognizeText(blob: blob) }.value
+            guard !text.isEmpty else { return }
+            self.store.update(id: id) {
+                guard $0.blobPath == blob else { return }
+                $0.setText(text)
+                $0.meta.hasOCR = true
+            }
+        }
     }
 
     private func source(for snap: PasteboardSnapshot) -> (String?, String?) {
@@ -81,16 +163,97 @@ final class CaptureCoordinator {
 
     // MARK: - Écriture par Copia
 
-    func copyToPasteboard(_ item: ClipItem) {
+    /// Remet une copie dans le presse-papier.
+    /// - Parameter plain: texte brut seulement (texte riche → texte, fichiers → chemins, image → texte reconnu).
+    /// - Returns: `false` s'il n'y avait rien à écrire (ex. image sans texte en mode brut).
+    @discardableResult
+    func copyToPasteboard(_ item: ClipItem, plain: Bool = false) -> Bool {
         let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(item.text, forType: .string)
+        var ownHash = item.hash
+
+        if plain || item.kind == .text {
+            guard item.hasPlainText else { return false }
+            pb.clearContents()
+            pb.setString(item.plainText, forType: .string)
+            if item.kind == .fileURL || item.kind == .image {
+                ownHash = ClipHasher.hash(item.plainText, trimWhitespace: prefs.trimWhitespaceForDedup)
+            }
+        } else {
+            switch item.kind {
+            case .text:
+                break
+            case .richText:
+                pb.clearContents()
+                if let payload = BlobStore.readRich(item.blobPath) {
+                    for (type, data) in payload { pb.setData(data, forType: NSPasteboard.PasteboardType(type)) }
+                }
+                pb.setString(item.text, forType: .string)
+            case .fileURL:
+                let urls = item.fileURLs.filter { FileManager.default.fileExists(atPath: $0.path) }
+                pb.clearContents()
+                if urls.isEmpty {
+                    pb.setString(item.plainText, forType: .string)
+                } else {
+                    pb.writeObjects(urls as [NSURL])
+                }
+            case .image:
+                guard writeImage(item, to: pb) else { return false }
+            }
+        }
         if let id = Bundle.main.bundleIdentifier {
             pb.setString(id, forType: NSPasteboard.PasteboardType("org.nspasteboard.source"))
         }
         watcher.ignore(changeCount: pb.changeCount)
-        engine.noteOwnWrite(hash: item.hash, time: Date.now.timeIntervalSinceReferenceDate)
+        engine.noteOwnWrite(hash: ownHash, time: Date.now.timeIntervalSinceReferenceDate)
         store.bump(id: item.id)
-        currentHash = item.hash
+        currentHash = ownHash
+        return true
+    }
+
+    private func writeImage(_ item: ClipItem, to pb: NSPasteboard) -> Bool {
+        let native: Data
+        let nativeType: String
+        if let pending = pendingImages[item.id] {
+            native = pending.data; nativeType = pending.type
+        } else if let data = BlobStore.read(item.blobPath), let fmt = item.meta.format {
+            native = data
+            nativeType = Self.uti(forFormat: fmt)
+        } else {
+            return false
+        }
+        pb.clearContents()
+        let pbItem = NSPasteboardItem()
+        pbItem.setData(native, forType: NSPasteboard.PasteboardType(nativeType))
+        // PNG et TIFF à la demande : aucune conversion tant qu'aucune app ne les réclame.
+        let lazyTypes = [UTType.png.identifier, UTType.tiff.identifier].filter { $0 != nativeType }
+        let provider = LazyImageProvider(data: native)
+        pbItem.setDataProvider(provider, forTypes: lazyTypes.map { NSPasteboard.PasteboardType($0) })
+        imageProvider = provider
+        return pb.writeObjects([pbItem])
+    }
+
+    static func uti(forFormat fmt: String) -> String {
+        switch fmt {
+        case "png": UTType.png.identifier
+        case "heic": UTType.heic.identifier
+        case "jpg", "jpeg": UTType.jpeg.identifier
+        case "gif": UTType.gif.identifier
+        case "webp": UTType.webP.identifier
+        default: UTType.tiff.identifier
+        }
+    }
+}
+
+/// Convertit l'image en PNG / TIFF seulement quand une app colle ce format.
+nonisolated final class LazyImageProvider: NSObject, NSPasteboardItemDataProvider, @unchecked Sendable {
+    private let data: Data
+
+    init(data: Data) { self.data = data }
+
+    func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem, provideDataForType type: NSPasteboard.PasteboardType) {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil),
+              let ut = UTType(type.rawValue),
+              let out = ImageProcessor.encode(src, type: ut) else { return }
+        item.setData(out, forType: type)
     }
 }

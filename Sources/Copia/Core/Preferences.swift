@@ -57,6 +57,7 @@ final class Preferences {
     @ObservationIgnored var onLimitsChange: (() -> Void)?
     @ObservationIgnored var onPollingChange: (() -> Void)?
     @ObservationIgnored var onHotKeyChange: (() -> Void)?
+    @ObservationIgnored var onCaptureOptionsChange: (() -> Void)?
 
     // Historique
     var maxStored: Int { didSet { d.set(maxStored, forKey: "maxStored"); onLimitsChange?() } }
@@ -106,8 +107,16 @@ final class Preferences {
     // Performance
     var pollingMode: PollingMode { didSet { d.set(pollingMode.rawValue, forKey: "pollingMode"); onPollingChange?() } }
 
-    // Phase 2
-    var captureImages: Bool { didSet { d.set(captureImages, forKey: "captureImages") } }
+    // Images, fichiers, texte riche
+    var captureImages: Bool { didSet { d.set(captureImages, forKey: "captureImages"); onCaptureOptionsChange?() } }
+    var captureFiles: Bool { didSet { d.set(captureFiles, forKey: "captureFiles"); onCaptureOptionsChange?() } }
+    var captureRichText: Bool { didSet { d.set(captureRichText, forKey: "captureRichText"); onCaptureOptionsChange?() } }
+    var ocrImages: Bool { didSet { d.set(ocrImages, forKey: "ocrImages") } }
+    var imageStorage: ImageStorage { didSet { d.set(imageStorage.rawValue, forKey: "imageStorage") } }
+    var maxImageMB: Int { didSet { d.set(maxImageMB, forKey: "maxImageMB"); onCaptureOptionsChange?() } }
+    var diskQuotaMB: Int { didSet { d.set(diskQuotaMB, forKey: "diskQuotaMB"); onLimitsChange?() } }
+    /// Le texte riche se colle sans mise en forme par défaut (⌥↩ inverse).
+    var pastePlainByDefault: Bool { didSet { d.set(pastePlainByDefault, forKey: "pastePlainByDefault") } }
 
     // Statistiques
     var statMerged: Int { didSet { d.set(statMerged, forKey: "statMerged") } }
@@ -140,7 +149,10 @@ final class Preferences {
             "panelPosition": PanelPosition.textCaret.rawValue, "panelMaterial": PanelMaterial.frosted.rawValue,
             "pasteOnSelect": true, "showShortcutNumbers": true, "playSound": false,
             "hoverPreview": true, "hoverPreviewDelay": 0.7,
-            "pollingMode": PollingMode.balanced.rawValue, "captureImages": false,
+            "pollingMode": PollingMode.balanced.rawValue, "captureImages": true,
+            "captureFiles": true, "captureRichText": true, "ocrImages": true,
+            "imageStorage": ImageStorage.heic.rawValue, "maxImageMB": 40, "diskQuotaMB": 1024,
+            "pastePlainByDefault": false,
             "motionStyle": MotionStyle.subtle.rawValue, "animateKeyboardOpen": false,
             "animateKeyboardNav": false, "staggerRows": false, "slowMotion": false,
         ])
@@ -178,6 +190,13 @@ final class Preferences {
         }
         pollingMode = PollingMode(rawValue: d.string(forKey: "pollingMode") ?? "") ?? .balanced
         captureImages = d.bool(forKey: "captureImages")
+        captureFiles = d.bool(forKey: "captureFiles")
+        captureRichText = d.bool(forKey: "captureRichText")
+        ocrImages = d.bool(forKey: "ocrImages")
+        imageStorage = ImageStorage(rawValue: d.string(forKey: "imageStorage") ?? "") ?? .heic
+        maxImageMB = d.integer(forKey: "maxImageMB")
+        diskQuotaMB = d.integer(forKey: "diskQuotaMB")
+        pastePlainByDefault = d.bool(forKey: "pastePlainByDefault")
         statMerged = d.integer(forKey: "statMerged")
         statRestoresSilenced = d.integer(forKey: "statRestoresSilenced")
         statDictations = d.integer(forKey: "statDictations")
@@ -185,6 +204,13 @@ final class Preferences {
         statPastes = d.integer(forKey: "statPastes")
         hasLaunchedBefore = d.bool(forKey: "hasLaunchedBefore")
     }
+
+    var captureOptions: CaptureOptions {
+        CaptureOptions(images: captureImages, files: captureFiles, richText: captureRichText,
+                       maxImageBytes: max(maxImageMB, 1) * 1_048_576)
+    }
+
+    var diskQuotaBytes: Int { max(diskQuotaMB, 50) * 1_048_576 }
 
     var dedupConfig: DedupConfig {
         DedupConfig(smartDictation: smartDictation, dictationWindow: dictationWindow,

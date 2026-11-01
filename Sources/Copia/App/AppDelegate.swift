@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         store = ClipStore(db: ClipDatabase())
         store.enforceLimits(maxItems: prefs.maxStored, retentionDays: prefs.retentionDays)
+        store.enforceDiskQuota(maxBytes: prefs.diskQuotaBytes)
+        BlobStore.sweep(keeping: store.referencedBlobs)
 
         watcher = PasteboardWatcher(interval: prefs.pollingMode.interval)
         coordinator = CaptureCoordinator(store: store, watcher: watcher, prefs: prefs)
@@ -38,7 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         prefs.onLimitsChange = { [weak self] in
             guard let self else { return }
             self.store.enforceLimits(maxItems: self.prefs.maxStored, retentionDays: self.prefs.retentionDays)
+            self.store.enforceDiskQuota(maxBytes: self.prefs.diskQuotaBytes)
         }
+        prefs.onCaptureOptionsChange = { [weak self] in self?.coordinator.refreshCaptureOptions() }
         prefs.onHotKeyChange = { [weak self] in
             HotKeyCenter.shared.register(self?.prefs.hotKey)
             self?.statusItem.rebuildMenu()

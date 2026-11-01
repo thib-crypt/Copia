@@ -42,18 +42,26 @@ optimisé Apple Silicon / macOS 26+.
 - Recherche hors du thread principal, clés de recherche normalisées en cache, icônes d'apps en cache.
 - SQLite en WAL, écritures asynchrones sur une file utilitaire. Binaire arm64 optimisé (-O, dead-strip).
 
-## Phase 2 : images et fichiers (prévu)
+## Phase 2 : images, fichiers, texte riche (v1.1, livrée le 2026-11-01)
 
-Le schéma est déjà prêt : colonnes `kind` et `blob_path`.
-- Capture PNG/TIFF → fichiers HEIC compressés dans `~/Library/Application Support/Copia/Blobs`,
-  hash perceptuel pour dédoublonner, miniatures 2× générées à la volée (QuickLookThumbnailing).
-- URLs de fichiers (copie depuis le Finder) avec icônes.
-- Texte riche (RTF/HTML) conservé + « Coller en texte brut » (⌥↩).
-- Plafond de taille disque réglable, purge LRU.
-- OCR (Vision) pour rechercher le texte contenu dans les images.
+- **Images et captures** : PNG/TIFF/JPEG/HEIC/GIF/WebP. Stockage HEIC qualité 90 % (ou original sans perte)
+  dans `~/Library/Application Support/Copia/Blobs`, miniature 240 px, doublons détectés par hash exact des octets.
+  Recollées dans leur format natif ; PNG et TIFF fournis à la demande (`NSPasteboardItemDataProvider`).
+- **OCR Vision** (`RecognizeTextRequest`, fr + en) en arrière-plan, après l'encodage : le texte des captures est
+  cherchable. Le 1er OCR après le lancement charge le modèle (jusqu'à ~30 s), les suivants < 1 s.
+- **Fichiers du Finder** : recollés en tant que fichiers, ⌥↩ colle les chemins, badge « Introuvable », ⌘O / ⌘R.
+- **Texte riche** (RTF, RTFD, HTML ≤ 8 Mo) : recollé avec sa mise en forme, ⌥↩ en texte brut (réglage pour inverser).
+  Même hash que le texte brut, pour que la restauration VoiceInk reste reconnue.
+- Filtres Tout / Texte / Images / Fichiers (⌘← ⌘→), aperçu ⌘Y adapté à chaque type, glisser-déposer vers d'autres apps.
+- Plafond disque (1 Go par défaut) : les images les plus anciennes partent d'abord ; le texte riche ancien perd
+  seulement sa mise en forme. Ménage des fichiers orphelins au lancement.
+- Base v2 : colonne `meta` (JSON), migration automatique depuis la v1.
+- Classement du presse-papier : logique pure `ContentClassifier`, testée (fichiers > image seule > texte riche > texte).
 
 ## Idées suivantes
 
 - Snippets (textes fixes) avec raccourcis.
 - Transformations au collage (MAJUSCULES, nettoyer les espaces, retirer le suivi des URL).
 - Synchronisation iCloud (CloudKit) facultative.
+- Glisser plusieurs fichiers à la fois (aujourd'hui : le premier seulement).
+- Hash perceptuel pour fusionner une même image réencodée par une autre app.

@@ -22,6 +22,9 @@ final class ClipStore {
     var count: Int { items.count }
     var pinnedCount: Int { items.lazy.filter(\.pinned).count }
     var dictationCount: Int { items.lazy.filter(\.isDictation).count }
+    func count(of kind: ClipKind) -> Int { items.lazy.filter { $0.kind == kind }.count }
+    /// Octets occupés par les images et le texte riche.
+    var mediaBytes: Int { items.reduce(0) { $0 + ($1.meta.bytes ?? 0) } }
 
     func item(hash: String) -> ClipItem? {
         guard let id = byHash[hash] else { return nil }
@@ -33,16 +36,33 @@ final class ClipStore {
     // MARK: - Mutations
 
     @discardableResult
-    func insert(text: String, hash: String, sourceBundleID: String?, sourceAppName: String?,
-                isDictation: Bool, at date: Date = .now) -> ClipItem {
-        let item = ClipItem(id: nextID, text: text, hash: hash, createdAt: date, lastCopiedAt: date,
-                            sourceBundleID: sourceBundleID, sourceAppName: sourceAppName, isDictation: isDictation)
+    func insert(kind: ClipKind = .text, text: String, hash: String, sourceBundleID: String?, sourceAppName: String?,
+                isDictation: Bool, blobPath: String? = nil, meta: ClipMeta = .empty, at date: Date = .now) -> ClipItem {
+        let item = ClipItem(id: nextID, kind: kind, text: text, hash: hash, createdAt: date, lastCopiedAt: date,
+                            sourceBundleID: sourceBundleID, sourceAppName: sourceAppName, isDictation: isDictation,
+                            blobPath: blobPath, meta: meta)
         nextID += 1
         items.insert(item, at: 0)
         byHash[hash] = item.id
-        searchKeys[item.id] = TextNormalizer.searchKey(for: text)
+        searchKeys[item.id] = Self.key(for: item)
         db.upsert([item])
         return item
+    }
+
+    /// Modifie une copie sur place (fin du traitement d'une image, nouveau contenu riche…).
+    /// Les fichiers qui ne sont plus référencés sont supprimés.
+    @discardableResult
+    func update(id: Int64, _ mutate: (inout ClipItem) -> Void) -> Bool {
+        guard let idx = items.firstIndex(where: { $0.id == id }) else { return false }
+        var item = items[idx]
+        let oldFiles = Self.files(of: item)
+        mutate(&item)
+        let gone = oldFiles.subtracting(Self.files(of: item))
+        items[idx] = item
+        searchKeys[id] = Self.key(for: item)
+        BlobStore.remove(Array(gone))
+        db.upsert([item])
+        return true
     }
 
     /// Fusion d'un doublon : remonte en haut, incrémente le compteur.
@@ -52,9 +72,9 @@ final class ClipStore {
         item.lastCopiedAt = date
         item.copyCount += 1
         if markDictation { item.isDictation = true }
-        if let latestText, latestText != item.text {
-            item.text = latestText
-            item.preview = ClipItem.makePreview(latestText)
+        if let latestText, latestText != item.text, item.kind == .text || item.kind == .richText {
+            item.setText(latestText)
+            searchKeys[id] = Self.key(for: item)
         }
         items.insert(item, at: 0)
         db.upsert([item])
@@ -107,6 +127,42 @@ final class ClipStore {
         db.delete(ids: Array(ids))
     }
 
+    /// Plafond disque : les images les plus anciennes (non épinglées) partent d'abord ;
+    /// le texte riche ancien perd sa mise en forme mais garde son texte.
+    func enforceDiskQuota(maxBytes: Int) {
+        var total = mediaBytes
+        guard total > maxBytes else { return }
+        var deleteIDs: [Int64] = []
+        for it in items.reversed() where !it.pinned && (it.meta.bytes ?? 0) > 0 {
+            guard total > maxBytes else { break }
+            total -= it.meta.bytes ?? 0
+            if it.kind == .richText {
+                update(id: it.id) { $0.kind = .text; $0.blobPath = nil; $0.meta = .empty }
+            } else {
+                deleteIDs.append(it.id)
+            }
+        }
+        guard !deleteIDs.isEmpty else { return }
+        let ids = Set(deleteIDs)
+        let removed = items.filter { ids.contains($0.id) }
+        items.removeAll { ids.contains($0.id) }
+        removed.forEach(forget)
+        db.delete(ids: deleteIDs)
+    }
+
+    /// Supprime toutes les images (non épinglées).
+    func deleteAll(kind: ClipKind) {
+        let removed = items.filter { $0.kind == kind && !$0.pinned }
+        guard !removed.isEmpty else { return }
+        let ids = Set(removed.map(\.id))
+        items.removeAll { ids.contains($0.id) }
+        removed.forEach(forget)
+        db.delete(ids: Array(ids))
+    }
+
+    /// Noms de tous les fichiers référencés (pour le ménage au lancement).
+    var referencedBlobs: Set<String> { items.reduce(into: Set<String>()) { $0.formUnion(Self.files(of: $1)) } }
+
     /// Import en masse (historique CopyClip). Retourne le nombre de clips ajoutés.
     func importClips(_ entries: [CopyClipImporter.Entry], trimWhitespace: Bool) -> Int {
         var added: [ClipItem] = []
@@ -131,7 +187,7 @@ final class ClipStore {
     func searchCandidates() -> [SearchCandidate] {
         let n = max(items.count - 1, 1)
         return items.enumerated().map { i, it in
-            SearchCandidate(id: it.id, key: searchKeys[it.id] ?? TextNormalizer.searchKey(for: it.text),
+            SearchCandidate(id: it.id, key: searchKeys[it.id] ?? Self.key(for: it),
                             recency: 1 - Double(i) / Double(n), pinned: it.pinned)
         }
     }
@@ -143,6 +199,18 @@ final class ClipStore {
     private func forget(_ item: ClipItem) {
         if byHash[item.hash] == item.id { byHash[item.hash] = nil }
         searchKeys[item.id] = nil
+        BlobStore.remove(Array(Self.files(of: item)))
+    }
+
+    private static func files(of item: ClipItem) -> Set<String> {
+        var s = Set<String>()
+        if let b = item.blobPath { s.insert(b) }
+        if let t = item.meta.thumb { s.insert(t) }
+        return s
+    }
+
+    private static func key(for item: ClipItem) -> String {
+        TextNormalizer.searchKey(for: item.kind == .text ? item.text : item.text + item.searchExtras)
     }
 
     private func rebuildIndexes() {
@@ -151,7 +219,7 @@ final class ClipStore {
         // Parcours du plus ancien au plus récent : le hash pointe sur la dernière occurrence.
         for it in items.reversed() {
             byHash[it.hash] = it.id
-            searchKeys[it.id] = TextNormalizer.searchKey(for: it.text)
+            searchKeys[it.id] = Self.key(for: it)
         }
         nextID = (items.map(\.id).max() ?? 0) + 1
     }
