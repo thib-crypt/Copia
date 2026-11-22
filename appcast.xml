@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Copia</title>
+    <link>https://github.com/thib-crypt/Copia</link>
+    <item>
+      <title>Copia 1.1.0</title>
+      <pubDate>Sun, 22 Nov 2026 17:33:37 +0000</pubDate>
+      <sparkle:version>9</sparkle:version>
+      <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <sparkle:fullReleaseNotesLink>https://github.com/thib-crypt/Copia/releases/tag/v1.1.0</sparkle:fullReleaseNotesLink>
+      <description><![CDATA[<ul>
+<li>Automatic updates with Sparkle (appcast on GitHub, EdDSA-signed notarized DMGs)</li>
+<li>Prepare for distribution: MIT license, README, release script (signed + notarized DMG)</li>
+<li>Copia : lien avec Forma (optimisation des images copiées, HUD)</li>
+<li>Copia 1.1 : images, fichiers du Finder et texte riche</li>
+<li>Ombres affinées et contenues dans la marge de la fenêtre (plus de bord carré)</li>
+<li>Aperçu au survol : contenu complet à côté du panneau, ⌘Y, réglage + délai</li>
+<li>Animations : système de mouvement centralisé selon les principes d'Emil Kowalski</li>
+<li>Import CopyClip : autorisation via sélecteur quand macOS protège le conteneur</li>
+<li>Copia 1.0 : remplaçant natif de CopyClip</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/thib-crypt/Copia/releases/download/v1.1.0/Copia-1.1.0.dmg" sparkle:edSignature="QO8wAnRrpFNSgC2DPIHRXUmQ4hfcaP+1BTDTV1EiTNh/8LDKuyLsqqorKfCHfltAKQJnDwaYlosW74FCCTraDg==" length="2674856" type="application/octet-stream"/>
+    </item>
+  </channel>
+</rss>
