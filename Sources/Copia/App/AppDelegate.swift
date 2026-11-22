@@ -56,6 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        Updater.shared.start()
+
         HotKeyCenter.shared.onPress = { [weak self] in self?.panel.toggle(.hotKey) }
         HotKeyCenter.shared.register(prefs.hotKey)
         watcher.start()
@@ -155,6 +157,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Réglages…", action: #selector(openSettings), keyEquivalent: ",")
         menu.addItem(withTitle: "Effacer l'historique…", action: #selector(clearHistory), keyEquivalent: "")
+        menu.addItem(withTitle: "Rechercher les mises à jour…", action: #selector(checkForUpdates), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quitter Copia", action: #selector(quit), keyEquivalent: "q")
         for i in menu.items { i.target = self }
@@ -164,6 +167,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     @objc private func togglePause() { prefs.paused.toggle() }
     @objc private func openSettings() { onOpenSettings?() }
     @objc private func quit() { NSApp.terminate(nil) }
+    @objc private func checkForUpdates() { Updater.shared.checkForUpdates() }
 
     @objc private func clearHistory() {
         NSApp.activate()

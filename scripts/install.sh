@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")/.."
 xcodegen generate >/dev/null
-xcodebuild -project Copia.xcodeproj -scheme Copia -configuration Release -derivedDataPath build/DD build | grep -E "error:|BUILD" || true
+xcodebuild -project Copia.xcodeproj -scheme Copia -configuration Release -derivedDataPath build/DD CURRENT_PROJECT_VERSION="$(git rev-list --count HEAD)" build | grep -E "error:|BUILD" || true
 pkill -x Copia 2>/dev/null || true
 sleep 0.5
 rm -rf /Applications/Copia.app

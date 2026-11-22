@@ -12,6 +12,7 @@ settings:
     SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
     SWIFT_APPROACHABLE_CONCURRENCY: YES
     DEVELOPMENT_TEAM: PG46BWSK3T
+    CURRENT_PROJECT_VERSION: "2"
     CODE_SIGN_STYLE: Manual
     CODE_SIGN_IDENTITY: "Developer ID Application"
     ENABLE_HARDENED_RUNTIME: YES
@@ -21,12 +22,18 @@ settings:
     Release:
       SWIFT_OPTIMIZATION_LEVEL: "-O"
       SWIFT_COMPILATION_MODE: wholemodule
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.6.0
 targets:
   Copia:
     type: application
     platform: macOS
     sources:
       - path: Sources/Copia
+    dependencies:
+      - package: Sparkle
     info:
       path: Sources/Copia/Info.plist
       properties:
@@ -34,7 +41,11 @@ targets:
         CFBundleDevelopmentRegion: fr
         CFBundleLocalizations: [fr]
         CFBundleShortVersionString: "1.1.0"
-        CFBundleVersion: "2"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        SUFeedURL: https://raw.githubusercontent.com/thib-crypt/Copia/main/appcast.xml
+        SUPublicEDKey: QHaJUYJvDIo9rTKXniXZqOJ3xN84d2U/5BjJnu8EbZw=
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
         LSUIElement: true
         LSApplicationCategoryType: public.app-category.productivity
         NSHumanReadableCopyright: "© 2026 Thibault Thevenin"
