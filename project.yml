@@ -37,7 +37,7 @@ targets:
         CFBundleVersion: "2"
         LSUIElement: true
         LSApplicationCategoryType: public.app-category.productivity
-        NSHumanReadableCopyright: "Copia — version personnelle"
+        NSHumanReadableCopyright: "© 2026 Thibault Thevenin"
         NSAccessibilityUsageDescription: "Copia colle le texte choisi à l'endroit de votre curseur."
     settings:
       base:

@@ -31,6 +31,6 @@
 	<key>NSAccessibilityUsageDescription</key>
 	<string>Copia colle le texte choisi à l'endroit de votre curseur.</string>
 	<key>NSHumanReadableCopyright</key>
-	<string>Copia — version personnelle</string>
+	<string>© 2026 Thibault Thevenin</string>
 </dict>
 </plist>
