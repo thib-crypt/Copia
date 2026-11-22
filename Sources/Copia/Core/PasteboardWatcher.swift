@@ -12,6 +12,8 @@ struct PasteboardSnapshot {
     var types: Set<String>
     var markerSource: String?
     var frontmost: NSRunningApplication?
+    /// Image que Forma vient d'optimiser (remplace l'original dans l'historique).
+    var formaStamp: FormaStamp? = nil
 
     var isConcealed: Bool { types.contains("org.nspasteboard.ConcealedType") }
     var isTransient: Bool { types.contains("org.nspasteboard.TransientType") }
@@ -154,8 +156,12 @@ final class PasteboardWatcher {
         case .text:
             content = .text(Self.capped(rawText ?? ""))
         }
+        var stamp: FormaStamp?
+        if types.contains(FormaStamp.pasteboardType) {
+            stamp = FormaStamp.decode(pb.data(forType: NSPasteboard.PasteboardType(FormaStamp.pasteboardType)))
+        }
         return PasteboardSnapshot(content: content, types: types, markerSource: marker,
-                                  frontmost: NSWorkspace.shared.frontmostApplication)
+                                  frontmost: NSWorkspace.shared.frontmostApplication, formaStamp: stamp)
     }
 
     private static func capped(_ text: String) -> String {

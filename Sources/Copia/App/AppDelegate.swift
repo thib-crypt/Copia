@@ -48,6 +48,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.statusItem.rebuildMenu()
         }
 
+        // Forma a modifié des fichiers (annulation, conversion) : les badges « Introuvable » se mettent à jour.
+        DistributedNotificationCenter.default().addObserver(forName: FormaBridge.historyChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.panel.model.isMounted else { return }
+                self.panel.refresh()
+            }
+        }
+
         HotKeyCenter.shared.onPress = { [weak self] in self?.panel.toggle(.hotKey) }
         HotKeyCenter.shared.register(prefs.hotKey)
         watcher.start()

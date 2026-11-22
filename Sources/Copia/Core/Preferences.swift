@@ -117,6 +117,8 @@ final class Preferences {
     var diskQuotaMB: Int { didSet { d.set(diskQuotaMB, forKey: "diskQuotaMB"); onLimitsChange?() } }
     /// Le texte riche se colle sans mise en forme par défaut (⌥↩ inverse).
     var pastePlainByDefault: Bool { didSet { d.set(pastePlainByDefault, forKey: "pastePlainByDefault") } }
+    /// Intégration Forma : images optimisées fusionnées, « Coller optimisé », conversions.
+    var formaIntegration: Bool { didSet { d.set(formaIntegration, forKey: "formaIntegration") } }
 
     // Statistiques
     var statMerged: Int { didSet { d.set(statMerged, forKey: "statMerged") } }
@@ -152,7 +154,7 @@ final class Preferences {
             "pollingMode": PollingMode.balanced.rawValue, "captureImages": true,
             "captureFiles": true, "captureRichText": true, "ocrImages": true,
             "imageStorage": ImageStorage.heic.rawValue, "maxImageMB": 40, "diskQuotaMB": 1024,
-            "pastePlainByDefault": false,
+            "pastePlainByDefault": false, "formaIntegration": true,
             "motionStyle": MotionStyle.subtle.rawValue, "animateKeyboardOpen": false,
             "animateKeyboardNav": false, "staggerRows": false, "slowMotion": false,
         ])
@@ -197,6 +199,7 @@ final class Preferences {
         maxImageMB = d.integer(forKey: "maxImageMB")
         diskQuotaMB = d.integer(forKey: "diskQuotaMB")
         pastePlainByDefault = d.bool(forKey: "pastePlainByDefault")
+        formaIntegration = d.bool(forKey: "formaIntegration")
         statMerged = d.integer(forKey: "statMerged")
         statRestoresSilenced = d.integer(forKey: "statRestoresSilenced")
         statDictations = d.integer(forKey: "statDictations")

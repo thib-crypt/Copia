@@ -233,6 +233,22 @@ struct ClipPanelView: View {
                 case .text:
                     EmptyView()
                 }
+                if (row.item.kind == .image || row.item.kind == .fileURL) && controller.formaAvailable {
+                    Divider()
+                    if let f = row.item.meta.forma, f.hasOriginal {
+                        Button("Coller l'original") { controller.activate(row.id, copyOnly: false, original: true) }
+                        Button("Revenir à l'original") { controller.revertToOriginal(row.id) }
+                    } else {
+                        Button("Coller optimisé (⇧↩)") { controller.forma(row.id, .optimize) }
+                    }
+                    Menu("Convertir avec Forma") {
+                        ForEach(FormaBridge.convertChoices, id: \.self) { f in
+                            Button(FormaBridge.formatName(f)) { controller.forma(row.id, .convert(f)) }
+                        }
+                    }
+                    Button("Agrandir ×2 (IA)") { controller.forma(row.id, .upscale) }
+                    Button("Ouvrir dans Forma") { controller.openInForma(row.id) }
+                }
                 Divider()
                 Button(row.item.pinned ? "Désépingler" : "Épingler") { controller.togglePin(row.id) }
                 Button("Supprimer", role: .destructive) { controller.delete(row.id) }
@@ -281,6 +297,7 @@ struct ClipPanelView: View {
         switch item?.kind {
         case .richText: KeyHint(keys: ["⌥", "↩"], label: prefs.pastePlainByDefault ? "Mis en forme" : "Texte brut")
         case .fileURL: KeyHint(keys: ["⌘", "R"], label: "Finder")
+        case .image where controller.formaAvailable && item?.meta.forma == nil: KeyHint(keys: ["⇧", "↩"], label: "Optimisé")
         case .image: KeyHint(keys: ["⌘", "O"], label: "Ouvrir")
         default: KeyHint(keys: ["⌘", "P"], label: "Épingler")
         }
@@ -385,6 +402,10 @@ struct ClipRowView: View {
             default:
                 EmptyView()
             }
+            if let f = row.item.meta.forma {
+                KindBadge(label: "Forma \(f.badge)", symbol: "sparkles", tint: .green, isSelected: isSelected)
+                    .help(f.hasOriginal ? "Optimisée par Forma (règle « \(f.rule ?? "") ») · l'original est gardé" : "Créée avec Forma")
+            }
             if row.item.isDictation {
                 Label("Dictée", systemImage: "waveform")
                     .font(.system(size: 9.5, weight: .semibold))
@@ -417,7 +438,11 @@ struct ClipRowView: View {
             let n = row.item.text.count
             if n > 280 { parts.append(n >= 10_000 ? "\(n / 1000) k car." : "\(n.formatted()) car.") }
         case .image:
-            if let b = row.item.meta.bytes { parts.append(Bytes.string(b)) }
+            if let b = row.item.meta.bytes {
+                // Une image optimisée garde son original : on affiche le poids de ce qui sera collé.
+                let shown = b - (row.item.meta.forma?.originalBytes ?? 0)
+                parts.append(Bytes.string(max(shown, 0)))
+            }
         case .fileURL:
             break
         }

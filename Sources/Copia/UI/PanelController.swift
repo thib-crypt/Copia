@@ -280,10 +280,10 @@ final class PanelController {
     // MARK: - Actions
 
     /// - Parameter plain: ⌥ : texte brut (texte riche sans mise en forme, chemins des fichiers, texte d'une image).
-    func activate(_ id: Int64, copyOnly: Bool, plain: Bool = false, byKeyboard: Bool = false) {
+    func activate(_ id: Int64, copyOnly: Bool, plain: Bool = false, byKeyboard: Bool = false, original: Bool = false) {
         guard let item = store.item(id: id) else { return }
         let asPlain = item.kind == .richText ? plain != prefs.pastePlainByDefault : plain
-        guard coordinator.copyToPasteboard(item, plain: asPlain) else {
+        guard coordinator.copyToPasteboard(item, plain: asPlain, original: original) else {
             NSSound.beep() // ex. image sans texte reconnu en mode « texte brut »
             return
         }
@@ -299,6 +299,55 @@ final class PanelController {
                 Paster.requestTrust()
             }
         }
+    }
+
+    // MARK: - Forma
+
+    var formaAvailable: Bool { prefs.formaIntegration && FormaBridge.isInstalled }
+
+    /// ⇧↩ « Coller optimisé », conversions et agrandissement : Forma travaille, puis la copie obtenue est collée.
+    func forma(_ id: Int64, _ request: FormaBridge.Request) {
+        guard formaAvailable, let item = store.item(id: id), item.kind == .image || item.kind == .fileURL else {
+            NSSound.beep(); return
+        }
+        let shouldPaste = prefs.pasteOnSelect
+        hide(byKeyboard: true)
+        FormaHUD.show("\(request.label) avec Forma…", symbol: "wand.and.stars", busy: true)
+        Task {
+            do {
+                let (result, message) = try await coordinator.runForma(request, on: item)
+                guard coordinator.copyToPasteboard(result) else {
+                    FormaHUD.show("Rien à coller", symbol: "exclamationmark.triangle"); NSSound.beep(); return
+                }
+                prefs.statPastes += 1
+                let unchanged = result.id == item.id && request == .optimize && item.meta.forma == nil && result.meta.forma == nil
+                FormaHUD.show(unchanged ? "\(message) · original collé" : message, symbol: unchanged ? "equal.circle" : "sparkles")
+                if prefs.playSound { NSSound(named: "Pop")?.play() }
+                guard shouldPaste else { return }
+                if Paster.isTrusted {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { Paster.sendCommandV() }
+                } else {
+                    Paster.requestTrust()
+                }
+            } catch {
+                FormaHUD.show(error.localizedDescription, symbol: "exclamationmark.triangle", duration: 4)
+                NSSound.beep()
+            }
+        }
+    }
+
+    func revertToOriginal(_ id: Int64) { coordinator.revertToOriginal(id) }
+
+    func openInForma(_ id: Int64) {
+        guard let item = store.item(id: id) else { return }
+        let urls: [URL]
+        switch item.kind {
+        case .fileURL: urls = item.fileURLs.filter { FileManager.default.fileExists(atPath: $0.path) }
+        case .image: urls = exportImage(item).map { [$0] } ?? []
+        default: urls = []
+        }
+        guard !urls.isEmpty else { NSSound.beep(); return }
+        hide(byKeyboard: true) { FormaBridge.openForma(urls) }
     }
 
     /// Ouvre le fichier copié ou l'image (dans Aperçu).
@@ -459,7 +508,11 @@ final class PanelController {
         case kVK_Tab: move(flags.contains(.shift) ? -1 : 1)
         case kVK_Return, kVK_ANSI_KeypadEnter:
             if let id = model.selectedID {
-                activate(id, copyOnly: cmd, plain: flags.contains(.option), byKeyboard: true)
+                if flags.contains(.shift) && !cmd && !flags.contains(.option) {
+                    forma(id, .optimize)
+                } else {
+                    activate(id, copyOnly: cmd, plain: flags.contains(.option), byKeyboard: true)
+                }
             }
         case kVK_ANSI_O where cmd:
             if let id = model.selectedID { open(id) }

@@ -65,6 +65,17 @@ final class ClipStore {
         return true
     }
 
+    /// Le contenu d'une copie a changé (image optimisée par Forma, retour à l'original).
+    func rehash(id: Int64, to newHash: String) {
+        guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
+        let old = items[idx].hash
+        guard old != newHash else { return }
+        if byHash[old] == id { byHash[old] = nil }
+        items[idx].hash = newHash
+        byHash[newHash] = id
+        db.upsert([items[idx]])
+    }
+
     /// Fusion d'un doublon : remonte en haut, incrémente le compteur.
     func bump(id: Int64, at date: Date = .now, latestText: String? = nil, markDictation: Bool = false) {
         guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
@@ -206,6 +217,8 @@ final class ClipStore {
         var s = Set<String>()
         if let b = item.blobPath { s.insert(b) }
         if let t = item.meta.thumb { s.insert(t) }
+        if let o = item.meta.forma?.originalBlob { s.insert(o) }
+        if let o = item.meta.forma?.originalThumb { s.insert(o) }
         return s
     }
 

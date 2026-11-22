@@ -11,6 +11,8 @@ final class CaptureCoordinator {
     @ObservationIgnored private var engine: DedupEngine
     /// Images reçues mais pas encore encodées : on peut déjà les recoller.
     @ObservationIgnored private var pendingImages: [Int64: (data: Data, type: String)] = [:]
+    /// Version Forma arrivée pendant que l'original était encore en cours d'encodage.
+    @ObservationIgnored private var pendingFormaVersions: [Int64: (data: Data, type: String, info: FormaInfo, hash: String)] = [:]
     /// Fournisseur paresseux (PNG/TIFF) de la dernière image recollée : vivant tant qu'elle est au presse-papier.
     @ObservationIgnored private var imageProvider: LazyImageProvider?
 
@@ -32,12 +34,30 @@ final class CaptureCoordinator {
     }
 
     func refreshConfig() { engine.config = prefs.dedupConfig }
+
+    // Accès pour l'extension Forma (même fichier, état privé).
+    fileprivate func pendingImagesContains(_ id: Int64) -> Bool { pendingImages[id] != nil }
+    fileprivate func setPendingFormaVersion(_ id: Int64, _ v: (data: Data, type: String, info: FormaInfo, hash: String)) { pendingFormaVersions[id] = v }
+    fileprivate var prefsDiskQuota: Int { prefs.diskQuotaBytes }
+    fileprivate func insertProcessedImage(_ id: Int64, data: Data, type: String, forma: FormaInfo) {
+        processImage(id: id, data: data, type: type, storage: .original, forma: forma)
+        store.enforceLimits(maxItems: prefs.maxStored, retentionDays: prefs.retentionDays)
+    }
     func refreshCaptureOptions() { watcher.options = prefs.captureOptions }
 
     private func handle(_ snap: PasteboardSnapshot) {
         let hash = snap.hash(trimWhitespace: prefs.trimWhitespaceForDedup)
         let now = Date.now
         guard !prefs.paused else {
+            engine.noteOwnWrite(hash: hash, time: now.timeIntervalSinceReferenceDate)
+            currentHash = hash
+            return
+        }
+        // Forma vient d'optimiser l'image copiée : on met à jour la copie d'origine au lieu d'en créer une deuxième.
+        if prefs.formaIntegration, let stamp = snap.formaStamp, case .image(let data, let type) = snap.content,
+           let target = formaTarget(for: stamp, at: now) {
+            let info = FormaInfo(savingsPercent: stamp.savingsPercent, format: stamp.format, rule: stamp.rule)
+            Task { await self.applyFormaVersion(target.id, data: data, type: type, info: info, newHash: hash) }
             engine.noteOwnWrite(hash: hash, time: now.timeIntervalSinceReferenceDate)
             currentHash = hash
             return
@@ -88,7 +108,9 @@ final class CaptureCoordinator {
         case .image(let data, let type):
             let item = store.insert(kind: .image, text: "", hash: hash, sourceBundleID: bundle, sourceAppName: name,
                                     isDictation: false, meta: ClipMeta(processing: true), at: date)
-            processImage(id: item.id, data: data, type: type)
+            // Image déjà optimisée par Forma : on garde ses octets tels quels.
+            let forma = snap.formaStamp.map { FormaInfo(savingsPercent: $0.savingsPercent, format: $0.format, rule: $0.rule) }
+            processImage(id: item.id, data: data, type: type, storage: forma != nil ? .original : nil, forma: forma)
         }
         if isDictation { prefs.statDictations += 1 }
         store.enforceLimits(maxItems: prefs.maxStored, retentionDays: prefs.retentionDays)
@@ -116,9 +138,9 @@ final class CaptureCoordinator {
         return (name, ClipMeta(bytes: data.count, richTypes: payload.keys.sorted()))
     }
 
-    private func processImage(id: Int64, data: Data, type: String) {
+    private func processImage(id: Int64, data: Data, type: String, storage override: ImageStorage? = nil, forma: FormaInfo? = nil) {
         pendingImages[id] = (data, type)
-        let storage = prefs.imageStorage
+        let storage = override ?? prefs.imageStorage
         let ocr = prefs.ocrImages
         Task { [weak self] in
             // 1. Encodage + miniature : l'image est utilisable en une fraction de seconde.
@@ -134,12 +156,16 @@ final class CaptureCoordinator {
             let alive = self.store.update(id: id) {
                 $0.blobPath = result.blobName
                 $0.meta = result.meta
+                if let forma { $0.meta.forma = forma }
             }
             guard alive else {
                 BlobStore.remove([result.blobName] + [result.meta.thumb].compactMap { $0 })
                 return
             }
             self.store.enforceDiskQuota(maxBytes: self.prefs.diskQuotaBytes)
+            if let v = self.pendingFormaVersions.removeValue(forKey: id) {
+                await self.applyFormaVersion(id, data: v.data, type: v.type, info: v.info, newHash: v.hash)
+            }
 
             // 2. Texte reconnu, en arrière-plan, sans bloquer quoi que ce soit.
             guard ocr else { return }
@@ -147,7 +173,8 @@ final class CaptureCoordinator {
             let text = await Task.detached(priority: .background) { await ImageProcessor.recognizeText(blob: blob) }.value
             guard !text.isEmpty else { return }
             self.store.update(id: id) {
-                guard $0.blobPath == blob else { return }
+                // L'image a pu être remplacée par sa version Forma entre-temps : le texte reste le même.
+                guard $0.blobPath == blob || $0.meta.forma?.originalBlob == blob else { return }
                 $0.setText(text)
                 $0.meta.hasOCR = true
             }
@@ -155,6 +182,9 @@ final class CaptureCoordinator {
     }
 
     private func source(for snap: PasteboardSnapshot) -> (String?, String?) {
+        if let app = snap.formaStamp?.sourceApp, !app.isEmpty {
+            return (app, AppIconCache.shared.name(for: app))
+        }
         if let marker = snap.markerSource, marker != Bundle.main.bundleIdentifier, !marker.isEmpty {
             return (marker, AppIconCache.shared.name(for: marker))
         }
@@ -167,9 +197,10 @@ final class CaptureCoordinator {
     /// - Parameter plain: texte brut seulement (texte riche → texte, fichiers → chemins, image → texte reconnu).
     /// - Returns: `false` s'il n'y avait rien à écrire (ex. image sans texte en mode brut).
     @discardableResult
-    func copyToPasteboard(_ item: ClipItem, plain: Bool = false) -> Bool {
+    func copyToPasteboard(_ item: ClipItem, plain: Bool = false, original: Bool = false) -> Bool {
         let pb = NSPasteboard.general
         var ownHash = item.hash
+        if original, let h = item.meta.forma?.originalHash { ownHash = h }
 
         if plain || item.kind == .text {
             guard item.hasPlainText else { return false }
@@ -197,7 +228,7 @@ final class CaptureCoordinator {
                     pb.writeObjects(urls as [NSURL])
                 }
             case .image:
-                guard writeImage(item, to: pb) else { return false }
+                guard writeImage(item, to: pb, original: original) else { return false }
             }
         }
         if let id = Bundle.main.bundleIdentifier {
@@ -210,10 +241,13 @@ final class CaptureCoordinator {
         return true
     }
 
-    private func writeImage(_ item: ClipItem, to pb: NSPasteboard) -> Bool {
+    private func writeImage(_ item: ClipItem, to pb: NSPasteboard, original: Bool = false) -> Bool {
         let native: Data
         let nativeType: String
-        if let pending = pendingImages[item.id] {
+        if original, let f = item.meta.forma, let data = BlobStore.read(f.originalBlob), let fmt = f.originalFormat {
+            native = data
+            nativeType = Self.uti(forFormat: fmt)
+        } else if let pending = pendingImages[item.id] {
             native = pending.data; nativeType = pending.type
         } else if let data = BlobStore.read(item.blobPath), let fmt = item.meta.format {
             native = data
@@ -239,7 +273,161 @@ final class CaptureCoordinator {
         case "jpg", "jpeg": UTType.jpeg.identifier
         case "gif": UTType.gif.identifier
         case "webp": UTType.webP.identifier
+        case "avif": "public.avif"
+        case "jxl": "public.jpeg-xl"
         default: UTType.tiff.identifier
+        }
+    }
+}
+
+// MARK: - Forma
+
+extension CaptureCoordinator {
+    /// La copie qu'une image optimisée par Forma remplace : celle dont Forma donne le hash,
+    /// sinon l'image copiée dans les 20 dernières secondes.
+    fileprivate func formaTarget(for stamp: FormaStamp, at now: Date) -> ClipItem? {
+        if let h = stamp.originalHash, let it = store.item(hash: h), it.kind == .image, it.meta.forma?.hasOriginal != true {
+            return it
+        }
+        if let first = store.items.first, first.kind == .image, first.meta.forma == nil,
+           now.timeIntervalSince(first.lastCopiedAt) < 20 {
+            return first
+        }
+        return nil
+    }
+
+    /// Remplace l'image d'une copie par sa version Forma. L'original est gardé (« Coller l'original »,
+    /// « Revenir à l'original ») et compte dans le plafond disque.
+    @discardableResult
+    func applyFormaVersion(_ id: Int64, data: Data, type: String, info: FormaInfo, newHash: String) async -> Bool {
+        if pendingImagesContains(id) {
+            setPendingFormaVersion(id, (data, type, info, newHash))
+            return true
+        }
+        let result = await Task.detached(priority: .userInitiated) {
+            ImageProcessor.process(data: data, sourceType: type, storage: .original)
+        }.value
+        guard let result else { return false }
+        var info = info
+        let ok = store.update(id: id) { item in
+            info.originalBlob = item.blobPath
+            info.originalThumb = item.meta.thumb
+            info.originalFormat = item.meta.format
+            info.originalWidth = item.meta.width
+            info.originalHeight = item.meta.height
+            info.originalBytes = item.meta.bytes
+            info.originalHash = item.hash
+            var meta = result.meta
+            meta.hasOCR = item.meta.hasOCR
+            meta.bytes = (meta.bytes ?? 0) + (item.meta.bytes ?? 0)
+            meta.forma = info
+            item.blobPath = result.blobName
+            item.meta = meta
+        }
+        guard ok else {
+            BlobStore.remove([result.blobName] + [result.meta.thumb].compactMap { $0 })
+            return false
+        }
+        store.rehash(id: id, to: newHash)
+        store.enforceDiskQuota(maxBytes: prefsDiskQuota)
+        return true
+    }
+
+    /// Annule l'optimisation : la copie redevient l'image d'origine.
+    func revertToOriginal(_ id: Int64) {
+        guard let item = store.item(id: id), let f = item.meta.forma, let blob = f.originalBlob, BlobStore.exists(blob) else { return }
+        store.update(id: id) {
+            let ocr = $0.meta.hasOCR
+            $0.blobPath = blob
+            $0.meta = ClipMeta(width: f.originalWidth, height: f.originalHeight, bytes: f.originalBytes,
+                               format: f.originalFormat, thumb: f.originalThumb, hasOCR: ocr)
+        }
+        if let h = f.originalHash { store.rehash(id: id, to: h) }
+    }
+
+    /// Lance Forma sur une copie (image ou fichiers) et renvoie la copie à coller, avec un message court.
+    func runForma(_ request: FormaBridge.Request, on item: ClipItem) async throws -> (ClipItem, String) {
+        let fm = FileManager.default
+        switch item.kind {
+        case .image:
+            if request == .optimize, item.meta.forma != nil { return (item, "Déjà optimisée") }
+            guard let blob = item.blobPath, BlobStore.exists(blob), let fmt = item.meta.format else {
+                throw FormaBridge.Failure(message: "Image encore en cours d'enregistrement, réessaie dans un instant.")
+            }
+            let dir = FormaBridge.workDirectory()
+            defer { try? fm.removeItem(at: dir) }
+            let input = dir.appendingPathComponent("Image Copia.\(fmt)")
+            try fm.copyItem(at: BlobStore.url(blob), to: input)
+
+            if request == .optimize {
+                let r = try await FormaBridge.optimize([input], app: item.sourceBundleID, outputDir: dir).first
+                guard let r, r.status == "optimized", let out = r.output, let data = try? Data(contentsOf: URL(fileURLWithPath: out)) else {
+                    return (item, r?.reason ?? r?.error ?? "Inchangée")
+                }
+                let ext = r.ext ?? URL(fileURLWithPath: out).pathExtension.lowercased()
+                let info = FormaInfo(savingsPercent: r.savingsPercent, format: r.format, rule: r.rule)
+                let hash = ClipHasher.hash(data: data, prefix: "img:")
+                guard await applyFormaVersion(item.id, data: data, type: Self.uti(forFormat: ext), info: info, newHash: hash),
+                      let updated = store.item(id: item.id) else {
+                    throw FormaBridge.Failure(message: "Impossible d'enregistrer l'image optimisée.")
+                }
+                return (updated, "\(r.format ?? "Optimisée") · −\(r.savingsPercent ?? 0) %")
+            }
+
+            let r = try await FormaBridge.convert([input], request: request, outputDir: dir).first
+            guard let r, r.status == "done", let out = r.outputs?.first,
+                  let data = try? Data(contentsOf: URL(fileURLWithPath: out.path)) else {
+                throw FormaBridge.Failure(message: r?.error ?? r?.note ?? "Forma n'a pas pu traiter l'image.")
+            }
+            let ext = URL(fileURLWithPath: out.path).pathExtension.lowercased()
+            let op: String
+            switch request {
+            case .convert(let f): op = FormaBridge.formatName(f)
+            default: op = "×2"
+            }
+            let hash = ClipHasher.hash(data: data, prefix: "img:")
+            if let existing = store.item(hash: hash) { return (existing, op) }
+            let clip = store.insert(kind: .image, text: item.text, hash: hash, sourceBundleID: item.sourceBundleID,
+                                    sourceAppName: item.sourceAppName, isDictation: false, meta: ClipMeta(processing: true))
+            let info = FormaInfo(savingsPercent: request == .upscale ? nil : r.savingsPercent, format: op, operation: op)
+            insertProcessedImage(clip.id, data: data, type: Self.uti(forFormat: ext), forma: info)
+            return (clip, request == .upscale ? "Agrandie ×2" : "\(op)\(r.savingsPercent.map { $0 > 0 ? " · −\($0) %" : "" } ?? "")")
+
+        case .fileURL:
+            let files = item.fileURLs.filter { fm.fileExists(atPath: $0.path) }
+            guard !files.isEmpty else { throw FormaBridge.Failure(message: "Les fichiers sont introuvables.") }
+            var outputs: [URL] = []
+            let message: String
+            if request == .optimize {
+                let results = try await FormaBridge.optimize(files, app: item.sourceBundleID, outputDir: nil)
+                let done = results.filter { $0.status == "optimized" }
+                guard !done.isEmpty else { return (item, results.first?.reason ?? results.first?.error ?? "Inchangés") }
+                // Les fichiers qui n'ont rien gagné restent tels quels.
+                outputs = zip(results, files).map { r, f in r.output.map { URL(fileURLWithPath: $0) } ?? f }
+                let before = done.reduce(Int64(0)) { $0 + ($1.inputSize ?? 0) }, after = done.reduce(Int64(0)) { $0 + ($1.outputSize ?? 0) }
+                message = "\(done.count) optimisé\(done.count > 1 ? "s" : "") · −\(before > 0 ? Int((1 - Double(after) / Double(before)) * 100) : 0) %"
+            } else {
+                let results = try await FormaBridge.convert(files, request: request, outputDir: nil)
+                outputs = results.flatMap { ($0.outputs ?? []).map { URL(fileURLWithPath: $0.path) } }
+                guard !outputs.isEmpty else { throw FormaBridge.Failure(message: results.first?.error ?? "Forma n'a rien produit.") }
+                message = "\(outputs.count) fichier\(outputs.count > 1 ? "s" : "") · \(request.label)"
+            }
+            let urls = outputs.map(\.standardizedFileURL)
+            let hash = ClipHasher.hash(files: urls)
+            if let existing = store.item(hash: hash) { return (existing, message) }
+            let op: String
+            switch request {
+            case .optimize: op = "Optimisé"
+            case .convert(let f): op = FormaBridge.formatName(f)
+            case .upscale: op = "×2"
+            }
+            let clip = store.insert(kind: .fileURL, text: urls.map(\.path).joined(separator: "\n"), hash: hash,
+                                    sourceBundleID: item.sourceBundleID, sourceAppName: item.sourceAppName, isDictation: false,
+                                    meta: ClipMeta(forma: FormaInfo(operation: op)))
+            return (clip, message)
+
+        default:
+            throw FormaBridge.Failure(message: "Forma traite les images et les fichiers.")
         }
     }
 }

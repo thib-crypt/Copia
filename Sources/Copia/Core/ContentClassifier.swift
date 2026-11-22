@@ -33,13 +33,19 @@ nonisolated enum ContentClassifier {
 
     /// Du meilleur au moins bon pour le stockage.
     static let imageTypes = ["public.png", "public.heic", "public.jpeg", "com.compuserve.gif",
-                             "org.webmproject.webp", "public.tiff"]
+                             "org.webmproject.webp", "public.avif", "public.jpeg-xl", "public.tiff"]
+
+    /// Image optimisée par Forma : elle arrive avec son fichier, mais c'est bien une image.
+    static let formaStampType = FormaStamp.pasteboardType
 
     static func classify(types: [String], plainText: String?, options: CaptureOptions) -> Kind {
         let set = Set(types)
         let text = plainText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let hasText = !text.isEmpty
 
+        if set.contains(formaStampType), options.images, let t = imageTypes.first(where: set.contains) {
+            return .image(type: t)
+        }
         if options.files && set.contains(fileURLType) { return .files }
 
         if let imageType = imageTypes.first(where: set.contains), !hasText || isSingleURL(text) {
@@ -71,6 +77,8 @@ nonisolated enum ContentClassifier {
         case "public.jpeg": "jpg"
         case "com.compuserve.gif": "gif"
         case "org.webmproject.webp": "webp"
+        case "public.avif": "avif"
+        case "public.jpeg-xl": "jxl"
         default: "tiff"
         }
     }

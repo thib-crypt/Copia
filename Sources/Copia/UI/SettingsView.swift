@@ -843,6 +843,29 @@ struct MediaPage: View {
             } header: {
                 Text("Disque")
             }
+            Section {
+                LabeledContent {
+                    if FormaBridge.isInstalled {
+                        Label("Installé", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    } else {
+                        Label("Introuvable", systemImage: "xmark.circle").foregroundStyle(.secondary)
+                    }
+                } label: {
+                    Text("Forma")
+                    Text("Ton convertisseur : /Applications/Forma.app")
+                }
+                Toggle(isOn: $prefs.formaIntegration) {
+                    Text("Travailler avec Forma")
+                    Text("Une image optimisée par Forma remplace sa copie d'origine (badge « Forma −62 % », original gardé). ⇧↩ colle une image optimisée selon les règles de Forma ; clic droit pour convertir ou agrandir ×2.")
+                }
+                .disabled(!FormaBridge.isInstalled)
+                if FormaBridge.isInstalled {
+                    Button("Modifier les règles d'optimisation dans Forma…") { FormaBridge.openForma() }
+                        .buttonStyle(.link)
+                }
+            } header: {
+                Text("Forma")
+            }
             Section("Collage") {
                 Toggle(isOn: $prefs.pastePlainByDefault) {
                     Text("Coller le texte riche sans mise en forme")

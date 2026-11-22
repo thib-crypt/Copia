@@ -25,6 +25,8 @@ nonisolated struct ClipMeta: Codable, Hashable, Sendable {
     var processing: Bool?
     /// Texte reconnu dans l'image (OCR Vision).
     var hasOCR: Bool?
+    /// Passage par Forma (optimisation sur place, conversion, agrandissement).
+    var forma: FormaInfo?
 
     static let empty = ClipMeta()
 
@@ -120,7 +122,7 @@ nonisolated struct ClipItem: Identifiable, Hashable, Sendable {
         switch kind {
         case .text: return ""
         case .richText: return " texte riche mis en forme"
-        case .image: return " image photo capture \(meta.format ?? "")"
+        case .image: return " image photo capture \(meta.format ?? "")\(meta.forma != nil ? " forma optimisée" : "")"
         case .fileURL:
             let names = fileURLs.map(\.lastPathComponent).joined(separator: " ")
             return " fichier \(names)"

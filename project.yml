@@ -54,6 +54,7 @@ targets:
       - path: Sources/Copia/Core/DedupEngine.swift
       - path: Sources/Copia/Core/ContentClassifier.swift
       - path: Sources/Copia/Core/ClipItem.swift
+      - path: Sources/Copia/Core/FormaLink.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.thibault.copia.tests
