@@ -21,7 +21,7 @@ On first paste, macOS asks for the **Accessibility** permission (Copia sends ⌘
   zero network access, no telemetry.
 - **Keyboard first**: ↑↓, ↩ paste, ⌘↩ copy only, ⌘1…9, ⌘P pin, ⌘⌫ delete, ⌘Y preview, ⌘← ⌘→ filters, ⎋.
 - **Retention**: up to 5,000 clips, by age (7/30/90/365 days), 1 GB disk cap for media; pinned clips are kept.
-- **Import from CopyClip** (FIPLAB) history.
+- **Import from CopyClip**: brings over your existing CopyClip history.
 - **Forma integration**: shows the savings when [Forma](https://github.com/thib-crypt/Forma) optimizes a copied image,
   and links the optimized copy to the original.
 - **Energy**: only `changeCount` is polled with an adaptive, tolerant timer; fully paused during sleep, display off or a

@@ -907,7 +907,7 @@ struct PerformancePage: View {
                                label: "mémoire utilisée", tint: .orange)
                     MetricTile(value: checks.formatted(.number.precision(.fractionLength(1))), unit: "/s",
                                label: "vérifications du presse-papier", tint: .yellow)
-                    MetricTile(value: "0", unit: "", label: "requête réseau (CopyClip : pubs FIPLAB)", tint: .green)
+                    MetricTile(value: "0", unit: "", label: "requête réseau", tint: .green)
                 }
             }
             Section {

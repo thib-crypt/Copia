@@ -1,21 +1,21 @@
 # Copia — plan
 
-Remplaçant personnel de CopyClip (FIPLAB), natif Swift/SwiftUI + AppKit, sans dépendance externe,
+Alternative à CopyClip, native Swift/SwiftUI + AppKit, sans dépendance externe,
 optimisé Apple Silicon / macOS 26+.
 
-## Ce qu'on garde de CopyClip (analyse REA de la v1.9.86)
+## Par rapport à CopyClip
 
 | CopyClip | Copia |
 |---|---|
 | Icône dans la barre des menus, liste des clips | ✅ panneau flottant (non activant, garde le focus de l'app en cours) |
 | « Remember » / « Display » (80 / 20) | ✅ 300 conservées (jusqu'à 5 000), 20 affichées |
-| Raccourci global (MASShortcut) | ✅ raccourci Carbon natif, enregistreur dans les réglages (⌥⌘V par défaut) |
-| Coller au clic (AppleScript `keystroke "v"`) | ✅ CGEvent ⌘V direct (plus rapide, pas d'AppleScript) |
+| Raccourci global | ✅ raccourci Carbon natif, enregistreur dans les réglages (⌥⌘V par défaut) |
+| Coller au clic | ✅ ⌘V envoyé directement (CGEvent) |
 | Exceptions (apps en liste noire) | ✅ + respect automatique des marqueurs nspasteboard.org (mots de passe, transitoires) |
 | Démarrage à l'ouverture de session | ✅ SMAppService |
 | Effacer / supprimer des clips | ✅ + épingler |
-| Base Core Data SQLite | ✅ SQLite3 direct (WAL, écritures en tâche de fond) + **import de l'historique CopyClip** |
-| Pubs / télémétrie FIPLAB (`api.fiplabcdn.com`) | ❌ supprimé, zéro réseau |
+| Historique conservé entre les sessions | ✅ SQLite3 direct (WAL, écritures en tâche de fond) + **import de l'historique CopyClip** |
+| Publicités, connexions réseau | ❌ aucune : zéro réseau, aucune télémétrie |
 
 ## Nouveautés
 
